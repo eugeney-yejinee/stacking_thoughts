@@ -3289,6 +3289,126 @@ else:
                             반증원장=(FLG if rows else None), lamS=lamS, lamO=lamO)
 ''')
 
+# ═════════════════════════════════════════════════════════════════════════════
+md(r'''
+## 7절-D · 배향 — VL-링커-VH 와 VH-링커-VL 이 **반대로** 가는가
+
+v09 의 실측 결과를 보고 넣었다. 항체별 **길이 → HMW** 기울기가 이랬다.
+
+| 배향 | 항체 | rho(길이, HMW) |
+|---|---|---|
+| LH | 실측4_B1 | **−0.80** |
+| LH | 실측2_B2 | **−0.80** |
+| LH | 실측3_B3 | **−0.87** |
+| LH | 실측1_B4 | **−0.80** |
+| HL | 실측9_B5 | **+0.80** |
+
+LH 넷이 전부 n=4 가 낼 수 있는 거의 최대값으로 **같은 방향**이고, HL 하나만
+**정확히 반대**다. 그런데 전체로 묶으면 27쌍 중 18쌍(0.69, p=0.12) 밖에 안 된다 —
+HL 항체의 쌍들이 전부 '틀린' 쪽으로 세어지기 때문이다. **묶는 행위 자체가
+신호를 지운다.** 그러면 묶지 말고 배향을 **조절변수**로 두고 물어야 한다.
+
+### 왜 말이 되는가
+scFv 는 대칭이 아니다. VH 의 C 말단과 VL 의 N 말단이 만나는 기하와, VL 의 C 말단과
+VH 의 N 말단이 만나는 기하는 서로 다르다. 같은 길이의 링커가 한쪽에서는 남고
+다른 쪽에서는 모자랄 수 있다 — 두 말단 사이의 직선거리가 배향마다 다르기 때문이다.
+Fv 에서 그 거리는 대략 VH C말단–VL N말단이 **더 멀다**고 알려져 있다.
+
+### 그래도 이건 **가설이지 결과가 아니다**
+항체 5개 중 HL 이 **하나**다. 한쪽 수준에 표본이 하나면 그 기울기가 배향 때문인지
+그 항체 때문인지 **원리적으로 못 가른다.** 아래 셀은 그 사실을 먼저 찍는다.
+
+### 그런데 이미 가진 데이터에 **맞짝**이 있다
+v09 출력에 블록 6·7·8 이 각각 **같은 도메인 · 같은 링커 · 배향만 반대**인 항체 쌍이다
+(실측10_B6_HL ↔ 실측6_B6_LH, 실측11_B7_HL ↔ 실측7_B7_LH, 실측8_B8_HL ↔ 실측5_B8_LH).
+링커가 1종뿐이라 기울기는 못 내지만, **배향 하나만 다른 직접 대조 3쌍**이다.
+v09 는 이걸 블록으로 묶어 평균 내 버렸다 (그래서 안 보였다). v12 는 항체로 키를
+잡으므로 살아 있다. 아래에서 그 3쌍을 짝지어 뺀다.
+''')
+
+code(r'''
+# ── 7절-D · 배향 조절 시험 ─────────────────────────────────────────────────
+from math import comb
+_ok_d = ("USE" in dir() and len(USE) and HC and "배향" in USE.columns
+         and "Y" in dir())
+if not _ok_d:
+    print("7절-D 건너뜀 —", "7절이 안 돌았다" if "Y" not in dir() else "배향 열이 없다")
+else:
+    print("="*76); print("★ 7절-D · 배향이 링커 효과의 **부호**를 뒤집는가")
+    print("="*76)
+    # ── ① 항체별 길이 기울기 + 배향 ────────────────────────────────────────
+    SLd = antibody_slopes(Y, USE["길이"].values.astype(float), USE[GROUP].values)
+    _od = USE.drop_duplicates(GROUP).set_index(GROUP)["배향"]
+    SLd["배향"] = SLd.항체.map(_od)
+    SLd["부호"] = np.where(SLd.b > 0, "+", "−")
+    display(SLd[["항체", "배향", "k", "b", "se", "r_within", "부호"]].round(3))
+    print("  b 는 '링커가 1 aa 길어질 때 (부호 뒤집은) 항체 안 로짓' 이다.")
+    print("  ※ y 는 낮을수록 나쁜 값을 뒤집어 놓았으므로, b > 0 = 길수록 HMW 가 준다.\n")
+
+    # ── ② 배향 수준별 표본 — 먼저 물을 수 있는 질문인지부터 본다 ───────────
+    _cnt = SLd.배향.value_counts()
+    print("  배향별 항체 수:", dict(_cnt))
+    if len(_cnt) < 2 or _cnt.min() < 2:
+        if len(_cnt) < 2:
+            # 배향이 한 종류뿐 — 조절변수가 상수다. 검정이 **정의되지 않는다.**
+            _why = (f"배향이 '{_cnt.index[0]}' 한 종류뿐이다 ({int(_cnt.iloc[0])}개)"
+                    if len(_cnt) else "배향 정보가 없다")
+            print(f"  ★ {_why}. 조절변수가 상수라 검정이 정의되지 않는다.")
+        else:
+            _thin = _cnt.idxmin()
+            _why = f"'{_thin}' 배향 항체가 {int(_cnt.min())}개"
+            print(f"  ★ {_why}뿐이다.")
+            print("     그 항체의 기울기가 **배향 때문인지 그 항체 때문인지 못 가른다.**")
+        print("     순열 p 는 내지 않는다 — 낼 수 있는 척하면 안 된다.")
+        print("     위 기울기표의 부호만 읽고, 다음에 무엇을 만들지 정하는 데 써라.")
+        ORIENT_RESULT = dict(기울기표=SLd, 검정=None, 이유=_why)
+    else:
+        # 양쪽에 2개 이상 있을 때만 검정한다. 통계량은 7절-C 와 **같은 것**이다 —
+        # 항체 수준 라벨(여기서는 배향)만 재배치하는 정확 순열.
+        _S = (SLd.배향.values == SLd.배향.value_counts().index[0]).astype(float)
+        ITd = interaction_test(SLd, _S, sided="two", seed=11)
+        print(f"  γ = {ITd['gamma']:+.4f}  ·  순열 p = {ITd['순열p']:.4f}  "
+              f"({'정확' if ITd['정확'] else '무작위'} 순열 {ITd['순열수']}회, 양측, "
+              f"최소가능 p = {ITd['최소가능p']:.4f})")
+        print(f"  → {'**배향이 부호를 가른다.**' if ITd['순열p'] < ALPHA else '배향으로 갈린다고 못 한다.'}")
+        ORIENT_RESULT = dict(기울기표=SLd, 검정=ITd, 이유="")
+
+    # ── ③ 맞짝 대조 — 같은 도메인 · 같은 링커 · 배향만 반대 ────────────────
+    #   기울기가 필요 없는 유일한 증거다. 링커 1종짜리 항체도 여기엔 들어온다.
+    print("\n" + "─"*76)
+    print("③ 맞짝 대조 — 같은 블록 · 같은 링커 · 배향만 반대인 항체 쌍")
+    print("─"*76)
+    _A = FEAT[~FEAT.합성].copy() if "합성" in FEAT.columns else FEAT.copy()
+    _A = _A[_A[HC].notna()] if HC in _A.columns else _A.iloc[0:0]
+    pr = []
+    for (blk, lk), g in _A.groupby(["블록", "링커"]):
+        o = g.drop_duplicates("배향")
+        if o.배향.nunique() < 2: continue
+        for a in o[o.배향 == "LH"].itertuples():
+            for b in o[o.배향 == "HL"].itertuples():
+                pr.append(dict(블록=blk, 링커=lk, LH항체=a.항체, HL항체=b.항체,
+                               LH=getattr(a, HC, np.nan), HL=getattr(b, HC, np.nan)))
+    PR = pd.DataFrame(pr)
+    if len(PR):
+        PR["차_HL빼기LH"] = (PR.HL - PR.LH).round(2)
+        display(PR.round(2))
+        _d = PR.차_HL빼기LH.dropna().values
+        if len(_d) >= 2:
+            # 부호검정 — n 이 2~3 이라 정규근사를 쓰면 안 된다. 정확 이항이다.
+            _pos = int((_d > 0).sum()); _n = int((_d != 0).sum())
+            _pb = 2*min(sum(comb(_n, i) for i in range(_pos, _n+1)),
+                        sum(comb(_n, i) for i in range(0, _pos+1)))/2**_n
+            print(f"  차의 중앙값 {np.median(_d):+.2f} %p · "
+                  f"{_pos}/{_n} 쌍에서 HL 이 크다 · 정확 이항 p = {min(_pb,1.0):.3f}")
+            print(f"  ★ n={_n} 쌍이면 전부 같은 방향이어도 p ≥ {2/2**_n:.3f} 다 —")
+            print("     '유의하지 않다' 가 아니라 **'이 쌍 수로는 유의할 수 없다'** 이다.")
+            print("     방향만 읽고, 쌍을 더 만들지 말지를 정하는 데 써라.")
+    else:
+        print("  배향이 양쪽 다 있는 (블록, 링커) 칸이 없다 — 대조할 짝이 없다.")
+        print("  ※ 만들 수 있다면 이게 제일 싸다: 도메인·링커를 그대로 두고")
+        print("     배향만 뒤집은 구성체 3~4개. 기울기가 필요 없어 링커 1종이면 된다.")
+''')
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 md(r'''
