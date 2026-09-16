@@ -29,23 +29,30 @@ md(r'''
 # FvFlow v12 · 링커가 VH-VL 배향 **분포**를 바꾸는가, 그게 순도와 이어지는가
 
 ```
-scFv ─┬─ 링커 뺀 VL / VH 두 서열 ──→ ABodyBuilder2 ──→ 기준점 (이상적 VH-VL 각도)
-      │                                                       │
-      └─ 링커 포함 한 서열 ──→ BioEmu ──→ 앙상블 ──→ ABangle ──┴─→ Δ(6축) · OCD6
-                                                                        │
-                        합성 링커 요인패널 (조성 6 × 길이 4) ────────────┤
-                                                                        ↓
-                                              구성체당 특징 한 줄 → ML → 실측 순도
+                  ┌── ABodyBuilder2 ──→ 기준점 (이상적 VH-VL 각도)
+scFv ─┬─ VL / VH ─┤                        └── 계면 강도 (BSA · 접촉 · 소수성)
+      │  (링커 뺌) └── AF2-Multimer ──→ ipTM  ← 두 사슬로. 분자간 짝짓기를 묻는다
+      │                                          │
+      └─ 링커 포함 한 서열 ──→ BioEmu ──→ 앙상블 ─┼─→ ABangle Δ(6축) · OCD5 · 열림분율
+                                                 └─→ 링커 접촉 · 나선도
+              합성 링커 요인패널 (조성 7 × 길이 4 + 순서대조 + 씨앗반복)
+                                                  ↓
+                              구성체당 특징 한 줄  →  ML  →  실측 순도
+                                                     ↑
+                                       계면강도 × 열림  (7절-C 상호작용)
 ```
 
-**묻는 것 세 개** — 순서가 있다. 앞이 죽으면 뒤는 읽지 않는다.
+**묻는 것 네 개** — 순서가 있다. 앞이 죽으면 뒤는 읽지 않는다.
 
 1. **채널이 있는가.** BioEmu 가 링커 **조성**을 보는가, 아니면 사실상 길이만 보는가.
-   → 4-B절의 **합성 요인패널**이 답한다. 실측 패널로는 원리적으로 못 답한다.
+   → 6절-D(국소, 결정적) · 6절-C(전역)가 답한다. 실측 패널로는 원리적으로 못 답한다.
 2. **신호가 있는가.** 앙상블 특징이 순도와 이어지는가.
-   → 7절의 **블록 안 순열 검정**이 답한다.
+   → 7절 ① 의 **항체 안 순열 검정**이 답한다.
 3. **길이 말고 다른 게 있는가.** 앙상블이 링커 **길이**를 넘어서 무언가 더하는가.
-   → 7절의 **증분 검정**이 답한다. 이게 진짜 질문이다.
+   → 7절 ③ 의 **증분 검정**이 답한다.
+4. **같은 링커인데 왜 블록마다 다른가.** 도메인 교환 이량체가 답이라면, 링커가 얼마나
+   여느냐만이 아니라 **열린 계면이 얼마나 끈끈한가**가 같이 정해야 한다.
+   → 7절-C 의 **계면강도 × 열림 상호작용**이 답한다. 이게 이번에 새로 들어온 축이다.
 
 ---
 
@@ -72,6 +79,9 @@ scFv ─┬─ 링커 뺀 VL / VH 두 서열 ──→ ABodyBuilder2 ──→ �
 | **6절 특징표 + 두 원장** | 교란 원장(길이의 변장인가) · 잡음 원장(감쇠배율) |
 | **7절 ML** | 항체 고정효과 · LOGO · 순열 검정 · **증분 검정** · **검정력 곡선** · 설계 조언 |
 | **8절 대리모형 + 분산 분해** | Stage A/B 몫을 부트스트랩으로 따로 재서 찍는다 |
+| **3절-B 계면 강도** | ABB2 기준 구조에서 **공짜로** — BSA · 접촉밀도 · 소수성 · 4모델 흔들림 |
+| **3절-C AF2-Multimer ipTM** | VH+VL 을 **두 사슬로**. ABB2 가 구조상 못 던지는 질문이다 |
+| **7절-C 계면 상호작용** | 같은 링커인데 블록마다 다른 이유. 정확 순열 · 단측 · 경쟁 설명 대조 |
 
 ### 그리고 조용히 틀린 값을 내던 자리 열셋을 고쳤다
 전부 **오류를 내지 않고 그럴듯한 숫자를 돌려주던** 것들이라 더 위험했다.
@@ -719,6 +729,422 @@ print(f"기준점 {CONS.항체.nunique()-len(_miss)}/{CONS.항체.nunique()}"
       + (f"  ★ 빠짐: {_miss}" if _miss else ""))
 assert not _miss or not RUN_ML, \
     "기준점이 빠진 항체가 있다 — Δ 의 영점이 없으므로 5절부터 못 간다"
+''')
+
+# ═════════════════════════════════════════════════════════════════════════════
+md(r'''
+## 3절-B · 계면 강도 축 — **VH-VL 이 얼마나 세게 붙는가**
+
+### 왜 이 축이 필요한가
+지금까지 우리는 **링커가 Fv 를 얼마나 여는가**만 봤다. 그런데 scFv 가 HMW 로 가는
+길 가운데 하나는 **도메인 교환 이량체**다: 한 scFv 의 VH 가 *다른* scFv 의 VL 과 짝짓는다.
+링커를 12잔기 아래로 줄이면 분자내 짝짓기가 기하학적으로 불가능해져 강제로 이량체가
+되는 것이 diabody 이고 (Holliger et al., PNAS 1993), 그 연속선상에 있는 현상이다.
+
+그렇다면 **열린 것만으로는 부족하다.** 열린 계면이 다른 분자와 붙을 만큼 끈끈해야 한다.
+
+| | VH-VL 이 세게 붙는 Fv | VH-VL 이 약하게 붙는 Fv |
+|---|---|---|
+| 링커가 좀 풀어 놓으면 | 노출된 면이 끈끈 → 다른 scFv 와 이량체 → **HMW** | 노출돼도 잘 안 붙음 → **괜찮다** |
+
+이것이 **같은 링커인데 블록마다 결과가 다른 것**을 설명할 수 있다. 블록마다 도메인이
+다르니 계면 강도가 다르기 때문이다.
+
+### ★ 열역학을 똑바로 세우면 — 순진한 형태는 **틀린다**
+"계면이 셀수록 HMW 가 많다" 고 그냥 쓰면 안 된다. 평형을 직접 풀어 보면 이렇다.
+
+```
+M_closed ⇌ M_open            분자내 계면 하나가 풀린다     K_open  = Kd / c_eff
+2 M_open ⇌ D                 분자간 계면 **둘**이 생긴다   K_assoc = c_eff2 / Kd²
+
+[D] = K_assoc·[M_open]² = (c_eff2/Kd²)·(Kd/c_eff)²·[M_c]² = (c_eff2/c_eff²)·[M_c]²
+                                                             ↑ Kd 가 **사라진다**
+```
+
+단량체는 계면이 **하나**, 이량체는 **둘**, 열리는 데 **하나**가 드니 지수가 정확히
+상쇄된다. 수치로 확인했다 — Kd 를 3.5 자릿수 쓸어도 이량체 분율이 0.001988 → 0.001992
+로 꿈쩍도 안 한다. 같은 조건에서 링커(c_eff)만 쓸면 0.00002 → 0.80 으로 움직인다.
+
+**즉 평형만 놓고 보면 계면 친화도는 이량체 분율을 바꾸지 않는다.** 링커 기하가 전부다.
+(실험 문헌도 이 계열이다 — 이황화 안정화 scFv, 고리화 scFv, Arndt/Plückthun 1998 은
+전부 "closed 를 안정화하면 응집이 준다" 는 **주변부** 관계를 본다. 평형에서 상쇄되고도
+그 방향이 남는 것은 응집이 비가역이라 동역학 영역이기 때문이다.)
+
+### 그런데 **조건부로** 물으면 상쇄가 안 된다 — 그게 우리가 묻는 것이다
+상쇄는 `[M_open]` 을 다시 `Kd` 의 함수로 **되돌려 넣을 때만** 일어난다.
+우리는 열린 분율을 BioEmu 로 **측정한다.** 그 대입을 하지 않는다.
+
+```
+[D] = (c_eff2 / Kd²) · [M_open]²      ← [M_open] 을 관측량으로 고정하면
+                                         Kd 가 작을수록(셀수록) 이량체가 **제곱으로** 는다
+```
+
+수치로: 열린 분율을 고정하고 Kd 를 3자릿수 쓸면 이량체가 0.2 → 200,000 으로 간다.
+
+> **묻는 것: 같은 만큼 열렸을 때, 계면이 센 Fv 가 그 열림을 더 많은 응집으로 바꾸는가.**
+
+```
+y_ij = α_j + β·log(열림_ij) + γ·(계면강도_j × log(열림_ij)) + ε
+```
+
+★ **주효과로는 못 넣는다.** 계면강도는 항체마다 상수이고, 7절의 항체 안 중심화가
+항체마다 상수인 것을 **완전히 지운다** (모의에서 잔차 폭 3×10⁻¹⁶). 상호작용만 살아남는다.
+열림분율은 항체 안에서 변하기 때문이다.
+
+### ★ 그래서 **양측** 검정이다 — 부호를 미리 못 박는다
+두 방향이 다 가능하고, 어느 쪽이 나오느냐가 곧 해석이다.
+
+| 나오는 부호 | 뜻 |
+|---|---|
+| **rho < 0** | 조건부 예측대로다. `[D] ∝ [M_open]²/Kd²` 의 Kd 항이 보인 것 |
+| **rho > 0** | 조건화가 샜다. 열림분율이 계면 친화도를 덜 반영하면 **주변부** 관계가 새어 들어오는데 그쪽은 방향이 반대다 (Arndt/Plückthun 계열) |
+
+★ **전제가 하나 있다.** 조건부 논증은 BioEmu 의 열린 분율이 `Kd·c_eff` 를 실제로
+반영할 때만 성립한다. BioEmu 가 표준 Fv 사전분포만 보고 계면 친화도에 눈멀어 있으면
+조건화가 새고 부호가 뒤집힌다. 6절-C·6절-D 의 채널 판정이 그걸 잰다.
+
+### ★ 그리고 x 는 **로그** 열림분율이어야 한다 — 선형을 쓰면 가짜 신호가 난다
+기전이 이량체면 `HMW ∝ 열림²` 이므로 `logit(HMW) ≈ 2·log(열림) + 상수` 다.
+즉 **로그 축에서 기울기가 상수 2** 이고, 선형 축에서는 `d/d열림 = 2/열림` 이라
+**열림분율이 작은 항체가 기계적으로 더 가파른 기울기**를 갖는다.
+그런데 열림분율은 계면강도와 상관된다 (센 계면은 덜 열린다). 그러면 기울기가
+계면강도를 따라가는 것이 생물이 아니라 **축의 곡률**이 된다.
+
+상호작용을 **안 심은** 모의에서 이 인공물만으로 `Spearman = 1.00` 이 나왔다 —
+항체 5개의 정확 순열에서 얻을 수 있는 최소 p 를 정확히 때리는 완벽한 순서다.
+로그 축으로 바꾸면 `r = 0.017` 로 사라진다.
+
+셀은 덤으로 **지수 n** (logit(HMW) 대 log(열림) 기울기)도 찍는다.
+`n ≈ 2` 면 열린 단량체 둘이 만나는 기전과 맞고, `n ≈ 1` 이면 다른 이야기다.
+
+### 무엇으로 계면 강도를 잴 것인가 — ipTM 은 **1순위가 아니다**
+ipTM 을 쓰자는 제안은 방향이 맞지만, 그대로 쓰면 안 되는 이유가 셋 있다.
+
+1. **ipTM 은 친화도가 아니라 자기확신이다.** "이 배치가 맞다고 AF2 가 얼마나 확신하나"
+   이지 ΔG 가 아니다. BindCraft 도 ipTM 을 **설계 손실함수와 통과 필터**(보고된 컷오프
+   `ipTM > 0.5`)로 쓰지, 친화도의 정량 대리로 쓰지 않는다. 그 용법이 우리 용법을
+   보증하지 못한다.
+2. **VH-VL 계면은 PDB 에서 가장 흔한 단백질-단백질 계면이다.** 천연 Fv 열 몇 개에
+   돌리면 ipTM 이 전부 0.85~0.95 에 몰려 **변별력이 없을 가능성이 높다.**
+3. **ipTM 은 사슬 길이로 정규화된다.** CDR-H3 길이가 항체마다 크게 다르므로 그 경로로
+   오염될 수 있다 (같은 이유로 ipSAE 같은 대체 지표가 제안돼 있다).
+
+**사전 등록 규칙** — 결과 보기 전에 박는다.
+
+1. ipTM 의 변동계수(CV)가 5% 이상이면 → ipTM 을 쓴다.
+2. 아니면 → **계면 매몰면적(BSA)** 으로 자동 전환. ABB2 구조에서 공짜로 나온다.
+3. 나머지(계면 PAE · 접촉밀도 · 소수성 · ABB2 4모델 흔들림)는 **일치도 확인용**이다.
+   서로 안 맞으면 그 사실 자체를 보고한다. 골라 쓰지 않는다.
+4. 계면강도가 CDR-H3 길이 · Fv 순전하 · Fv 소수성 같은 **알려진 응집 인자**와
+   |rho| > 0.8 이면, 유의해도 "계면 때문" 이라 단정하지 않는다. 셀이 그 표를 찍는다.
+
+**더 나은 도구가 있다면**: 접촉 기반 ΔG 예측기(PRODIGY 계열)는 실험 Kd 에 대해
+검증된 상관이 있다. 여기 안 넣은 이유는 의존성이 하나 더 늘고 ABB2 구조로도
+BSA·접촉밀도가 같은 순위를 대개 주기 때문이다. ipTM 이 변별력이 없고 BSA 도
+경쟁 인자와 얽히면, 그때 붙일 다음 도구가 그것이다.
+
+ABB2 기반 지표 넷은 **이미 Drive 에 있는 구조로 공짜로** 나온다. ipTM 만 GPU 를 쓴다.
+''')
+
+code(r'''
+# ── 3절-B · 계면 강도 (ABodyBuilder2 기준 구조에서 공짜로) ─────────────────
+from Bio.PDB.SASA import ShrakeRupley
+_SR = ShrakeRupley()
+# Kyte-Doolittle 로 소수성 잔기 판정 (계면의 끈끈함을 실제로 만드는 것)
+_HYDROPHOBIC = set("AVLIMFWYC")
+IFACE_CUT = 5.0        # 계면 접촉 판정 (무거운 원자 간 Å)
+
+def _chains_HL(path):
+    """ABB2 기준 구조 → (H 잔기 목록, L 잔기 목록). 사슬 이름이 H/L 이다."""
+    st = next(_parser(path).get_structure("x", path).get_models())
+    ch = {c.id: [r for r in c if "CA" in r] for c in st}
+    if "H" in ch and "L" in ch and ch["H"] and ch["L"]:
+        return ch["H"], ch["L"]
+    big = sorted(ch.values(), key=len, reverse=True)[:2]
+    return (big[0], big[1]) if len(big) == 2 else (None, None)
+
+def _sasa_of(groups):
+    """잔기 묶음 목록을 한 구조로 모아 SASA 합을 낸다."""
+    from Bio.PDB import Structure, Model, Chain
+    sub = Structure.Structure("s"); mdl = Model.Model(0); sub.add(mdl)
+    for i, g in enumerate(groups):
+        c = Chain.Chain("AB"[i]); mdl.add(c)
+        for r in g: c.add(r.copy())
+    _SR.compute(sub, level="R")
+    return sum(r.sasa for c in sub[0] for r in c)
+
+def interface_metrics(path):
+    """한 구조의 VH-VL 계면 지표.
+
+    BSA = SASA(H) + SASA(L) − SASA(H+L).  응집 가설이 직접 겨누는 양이다 —
+    계면이 넓고 소수성이 높을수록, 열렸을 때 노출되는 면이 끈끈하다.
+    """
+    H, L = _chains_HL(path)
+    if not H or not L or len(H) < 50 or len(L) < 50: return {}
+    try:
+        bsa = _sasa_of([H]) + _sasa_of([L]) - _sasa_of([H, L])
+    except Exception:
+        return {}
+    # 계면 잔기 = 상대 사슬의 무거운 원자와 IFACE_CUT 안인 잔기
+    hx = [np.array([a.coord for a in r if a.element != "H"]) for r in H]
+    lx = [np.array([a.coord for a in r if a.element != "H"]) for r in L]
+    nct, hres = 0, []
+    for i, a in enumerate(hx):
+        near = False
+        for j, b in enumerate(lx):
+            if len(a) and len(b) and np.min(np.linalg.norm(
+                    a[:, None, :] - b[None, :, :], axis=-1)) < IFACE_CUT:
+                nct += 1; near = True
+        if near: hres.append(H[i].get_resname())
+    for j, b in enumerate(lx):
+        if any(len(a) and len(b) and np.min(np.linalg.norm(
+                a[:, None, :] - b[None, :, :], axis=-1)) < IFACE_CUT for a in hx):
+            hres.append(L[j].get_resname())
+    _3to1 = {"ALA":"A","CYS":"C","ASP":"D","GLU":"E","PHE":"F","GLY":"G","HIS":"H",
+             "ILE":"I","LYS":"K","LEU":"L","MET":"M","ASN":"N","PRO":"P","GLN":"Q",
+             "ARG":"R","SER":"S","THR":"T","VAL":"V","TRP":"W","TYR":"Y"}
+    aa = [_3to1.get(x, "X") for x in hres]
+    return dict(계면_BSA=round(float(bsa), 1),
+                계면_접촉수=nct,
+                계면_잔기수=len(hres),
+                계면_접촉밀도=round(nct/max(len(hres), 1), 2),
+                계면_소수성=round(float(np.mean([a in _HYDROPHOBIC for a in aa])), 3)
+                            if aa else np.nan)
+
+CSV_IFACE = f"{OUT}/interface.csv"
+IF = pd.read_csv(CSV_IFACE) if (REUSE_CSV and os.path.isfile(CSV_IFACE)) else pd.DataFrame()
+_have_if = set(IF.항체) if len(IF) else set()
+rows = []
+for ab in CONS.항체.unique():
+    if ab in _have_if: continue
+    mods = sorted(glob.glob(f"{REFD(ab)}/ref_m[0-9].pdb")) or [f"{REFD(ab)}/ref.pdb"]
+    mods = [m for m in mods if os.path.isfile(m)]
+    if not mods:
+        print(f"  {ab:<22} 기준 구조 없음 — 건너뜀"); continue
+    ms = [interface_metrics(m) for m in mods]
+    ms = [m for m in ms if m]
+    if not ms:
+        print(f"  {ab:<22} 계면 계산 실패"); continue
+    d = dict(항체=ab, n모델=len(ms))
+    for k in ms[0]:
+        v = [m[k] for m in ms if k in m and m[k] == m[k]]
+        d[k] = round(float(np.mean(v)), 3) if v else np.nan
+        d[f"{k}_SD"] = round(float(np.std(v, ddof=1)), 3) if len(v) > 1 else 0.0
+    # ★ ABB2 4모델의 ABangle 흩어짐 — 공짜로 얻는 '기준점 자체의 불확실성'.
+    #   4개 모델이 각도에 대해 서로 다르게 말하면 그 Fv 의 배향이 덜 결정적이라는 뜻이고,
+    #   그것 자체가 계면이 헐겁다는 신호다.
+    try:
+        w = f"/content/_ifp/{safe(ab)}"; os.makedirs(w, exist_ok=True)
+        r0 = CONS[CONS.항체 == ab].iloc[0]
+        pp = [write_pair(m, r0.b1, r0.b2, f"{w}/{os.path.basename(m)}",
+                         r0.배향[0], r0.배향) for m in mods]
+        aa_ = [x for x in abangle6_many(pp, quiet=True).values() if x]
+        if len(aa_) > 1:
+            d["기준점_흔들림"] = round(float(np.mean(
+                [np.std([x[k] for x in aa_], ddof=1)/AB_SD[k] for k in AB6])), 3)
+    except Exception as e:
+        print(f"    {ab} 흔들림 계산 실패: {type(e).__name__}")
+    rows.append(d)
+    print(f"  {ab:<22} BSA {d.get('계면_BSA', float('nan')):>7.1f} Å² · "
+          f"접촉 {d.get('계면_접촉수', 0):>4} · 소수성 {d.get('계면_소수성', float('nan')):.2f}"
+          + (f" · 흔들림 {d['기준점_흔들림']:.2f}σ" if "기준점_흔들림" in d else ""))
+if rows:
+    IF = pd.concat([IF, pd.DataFrame(rows)], ignore_index=True) if len(IF) else pd.DataFrame(rows)
+    IF = IF.drop_duplicates("항체", keep="last")
+    IF.to_csv(CSV_IFACE, index=False, encoding="utf-8-sig")
+shutil.rmtree("/content/_ifp", ignore_errors=True)
+print(f"\n계면 지표 {len(IF)} 항체 → {CSV_IFACE}")
+if len(IF): display(IF)
+''')
+
+code(r'''
+# ── 3절-C · AF2-Multimer ipTM — VH + VL 을 **두 사슬로** 준다 ───────────────
+# ★ 왜 ABodyBuilder2 로는 안 되는가. ABB2 는 항체 전용 모델이라 **짝지어진 Fv 를
+#   전제로 짓는다.** "이 둘이 서로 찾아가 붙을 것인가" 라는 질문 자체를 못 던진다.
+#   AF2-Multimer 에 링커 없이 두 사슬로 주면 바로 그 질문이 된다 — diabody 가 묻는
+#   분자간 짝짓기와 같은 질문이다. 이게 사용자 가설의 핵심이고 ipTM 을 쓰는 이유다.
+#
+# ★ ipTM 이 v11 에서 금지됐던 것과 여기 쓰는 것은 다르다. v11 이 경계한 것은
+#   **링커 포함 단일 사슬**의 ipTM 이었다 — 토큰 수로 정규화되어 링커 길이에 직접
+#   오염된다. 여기서는 링커가 없고 항체당 한 번만 재므로 그 오염 경로가 없다.
+#   대신 VH/VL 길이(특히 CDR-H3)가 항체마다 다른 것은 남으므로 아래에서 같이 찍는다.
+RUN_IPTM   = True
+IPTM_MODELS = 3          # 모델 몇 개 평균. 5 면 더 안정, 시간은 비례
+CSV_IPTM   = f"{OUT}/iptm.csv"
+
+IPTM = pd.read_csv(CSV_IPTM) if os.path.isfile(CSV_IPTM) else pd.DataFrame()
+_have = set(IPTM.항체) if len(IPTM) else set()
+_need = [ab for ab in CONS.항체.unique() if ab not in _have]
+print(f"  이미 있음 {len(CONS.항체.unique())-len(_need)}/{CONS.항체.nunique()}"
+      + (f" · 남은 것 {len(_need)} → 약 {len(_need)*4/60:.1f} h" if _need else " — 건너뜀"))
+
+if RUN_IPTM and _need:
+    V = venv311(); CF = f"{V}/bin/colabfold_batch"
+    if not os.path.isfile(CF):
+        print("colabfold 설치 중 (몇 분)…")
+        sh(["uv", "pip", "install", "--python", f"{V}/bin/python", "-q",
+            "colabfold[alphafold-minus-jax] @ git+https://github.com/sokrypton/ColabFold"])
+        sh(["uv", "pip", "install", "--python", f"{V}/bin/python", "-q", "jax[cuda12]"])
+    if not os.path.isfile(CF):
+        print(f"★ colabfold_batch 가 없다 — ipTM 을 건너뛴다. 3절-B 의 BSA 로 간다.")
+    else:
+      rows = []
+      for ab in _need:
+        if not budget(600, "AF2-Multimer"): break
+        r = CONS[CONS.항체 == ab].iloc[0]
+        H, L = (r.D1, r.D2) if r.배향 == "HL" else (r.D2, r.D1)
+        tag = safe(ab); w = f"/content/mm/{tag}"; os.makedirs(w, exist_ok=True)
+        # ★ 콜론이 사슬 구분자다. 링커를 넣지 않는다 — 분자간 짝짓기를 묻는 것이므로.
+        open(f"{w}/in.fasta", "w").write(f">{tag}\n{H}:{L}\n")
+        if not glob.glob(f"{w}/*_scores_*.json"):
+            sh([CF, f"{w}/in.fasta", w, "--num-models", str(IPTM_MODELS),
+                "--num-recycle", "3", "--model-type", "alphafold2_multimer_v3",
+                "--msa-mode", "mmseqs2_uniref_env"], tail=12)
+        js = sorted(glob.glob(f"{w}/*_scores_*.json"))
+        if not js:
+            print(f"  ★ {ab} AF2-Multimer 실패"); continue
+        it, pt, pae_x = [], [], []
+        for j in js:
+            try: z = json.load(open(j))
+            except Exception: continue
+            if "iptm" in z: it.append(float(z["iptm"]))
+            if "ptm"  in z: pt.append(float(z["ptm"]))
+            # 사슬 간 PAE — EBI 정의대로 '두 도메인의 **상대 배치**에 대한 확신'
+            if "pae" in z:
+                M = np.asarray(z["pae"], float)
+                nH = len(H)
+                if M.ndim == 2 and M.shape[0] >= nH + 30:
+                    pae_x.append(float(np.mean(np.concatenate(
+                        [M[:nH, nH:].ravel(), M[nH:, :nH].ravel()]))))
+        if not it:
+            print(f"  ★ {ab} 점수 파일에 iptm 이 없다"); continue
+        rows.append(dict(항체=ab, ipTM=round(float(np.mean(it)), 4),
+                         ipTM_SD=round(float(np.std(it, ddof=1)), 4) if len(it) > 1 else 0.0,
+                         pTM=round(float(np.mean(pt)), 4) if pt else np.nan,
+                         계면PAE=round(float(np.mean(pae_x)), 2) if pae_x else np.nan,
+                         nH=len(H), nL=len(L), n모델=len(it)))
+        print(f"  {elapsed()} {ab:<22} ipTM {rows[-1]['ipTM']:.3f} "
+              f"± {rows[-1]['ipTM_SD']:.3f} · 계면PAE {rows[-1]['계면PAE']}")
+      if rows:
+        IPTM = pd.concat([IPTM, pd.DataFrame(rows)], ignore_index=True) if len(IPTM) else pd.DataFrame(rows)
+        IPTM = IPTM.drop_duplicates("항체", keep="last")
+        IPTM.to_csv(CSV_IPTM, index=False, encoding="utf-8-sig")
+elif not RUN_IPTM:
+    print("ipTM 건너뜀 (RUN_IPTM=False) — 3절-B 의 BSA 로 간다")
+
+# ── 계면 강도 지수를 **하나로** 정한다. 사전 등록 규칙대로. ────────────────
+IFACE = IF.copy() if len(IF) else pd.DataFrame(dict(항체=CONS.항체.unique()))
+if len(IPTM): IFACE = IFACE.merge(IPTM, on="항체", how="outer")
+IFACE_SRC, IFACE_WHY = None, ""
+if len(IFACE):
+    _cv = lambda c: (float(IFACE[c].std(ddof=1)/abs(IFACE[c].mean()))
+                     if c in IFACE and IFACE[c].notna().sum() >= 3
+                     and abs(IFACE[c].mean()) > 1e-9 else np.nan)
+    cv_iptm, cv_bsa = _cv("ipTM"), _cv("계면_BSA")
+    print("")
+    print("="*76); print("★ 계면 강도 지수 선택 — 사전 등록 규칙"); print("="*76)
+    print(f"  ipTM      변동계수 {cv_iptm if cv_iptm==cv_iptm else float('nan'):.4f}  "
+          f"(≥ 0.05 이면 1순위)")
+    print(f"  계면_BSA  변동계수 {cv_bsa if cv_bsa==cv_bsa else float('nan'):.4f}  (대체)")
+    if np.isfinite(cv_iptm) and cv_iptm >= 0.05:
+        IFACE_SRC, IFACE_WHY = "ipTM", f"ipTM 의 변동계수가 {cv_iptm:.3f} 로 충분하다"
+    elif np.isfinite(cv_bsa):
+        IFACE_SRC = "계면_BSA"
+        IFACE_WHY = (f"ipTM 이 {'없거나' if not np.isfinite(cv_iptm) else f'변동계수 {cv_iptm:.3f} 로'} "
+                     f"변별력이 모자라 BSA 로 전환했다 (사전 등록된 대체)")
+    if IFACE_SRC:
+        IFACE["계면강도"] = IFACE[IFACE_SRC]
+        print(f"  → **{IFACE_SRC}** 를 쓴다. {IFACE_WHY}")
+        # 지표들이 서로 맞는가 — 골라 쓰지 않고 일치도만 본다
+        cand = [c for c in ("ipTM", "계면PAE", "계면_BSA", "계면_접촉밀도",
+                            "계면_소수성", "기준점_흔들림")
+                if c in IFACE and IFACE[c].notna().sum() >= 3]
+        if len(cand) >= 2:
+            print("\n  지표 간 일치도 (Spearman) — 안 맞으면 그 사실 자체를 보고한다")
+            display(IFACE[cand].corr(method="spearman").round(2))
+        # ── 경쟁 설명 — 계면 강도가 사실은 다른 것의 변장인가 ─────────────
+        # 항체 수준에서 응집을 좌우한다고 알려진 것들이 여럿 있다. 계면강도가
+        # 그중 하나와 거의 같다면, 7절-C 가 잡는 것은 계면이 아니라 그것이다.
+        # 전부 **서열만으로** 공짜로 나오므로 안 볼 이유가 없다.
+        _KD2 = dict(A=1.8, R=-4.5, N=-3.5, D=-3.5, C=2.5, Q=-3.5, E=-3.5, G=-0.4,
+                    H=-3.2, I=4.5, L=3.8, K=-3.9, M=1.9, F=2.8, P=-1.6, S=-0.8,
+                    T=-0.7, W=-0.9, Y=-1.3, V=4.2)
+        def _cdrh3_len(seq):
+            """CDR-H3 길이. ANARCI 로 잡고, 실패하면 FR4 모티프 앞 W 에서 센다.
+            응집과의 관계가 가장 널리 보고된 서열 특징이다."""
+            try:
+                from anarci import run_anarci
+                _, num, det, _ = run_anarci([("x", seq)], scheme="chothia")
+                if num and num[0] and det[0][0]["chain_type"] == "H":
+                    return sum(1 for (pos, _i), aa in num[0][0][0]
+                               if aa != "-" and 95 <= pos <= 102)
+            except Exception: pass
+            # ANARCI 가 실패하면 FR4 모티프(W-G-x-G)로 되짚는다.
+            # ★ 1절의 FR4_H 를 쓰지 않고 여기서 다시 만든다 — 이 셀만 따로 돌려도
+            #   죽지 않아야 하기 때문이다 (셀 간 숨은 의존은 나중에 반드시 문다).
+            m = re.search(r"W[GAS][QKRAHPSGE]G[TQAS]", seq[-40:])
+            return float(40 - m.start()) if m else np.nan
+        _cov = []
+        for _, rr in CONS.drop_duplicates("항체").iterrows():
+            H_, L_ = (rr.D1, rr.D2) if rr.배향 == "HL" else (rr.D2, rr.D1)
+            fv = H_ + L_
+            _cov.append(dict(항체=rr.항체,
+                             CDRH3길이=_cdrh3_len(H_),
+                             Fv순전하=sum(fv.count(a) for a in "KR")
+                                      - sum(fv.count(a) for a in "DE"),
+                             Fv소수성=round(float(np.mean(
+                                 [_KD2.get(a, 0.0) for a in fv])), 3),
+                             Fv길이=len(fv),
+                             홀수Cys=int(fv.count("C") % 2)))   # 홀수면 유리 티올이 있다
+        COV = pd.DataFrame(_cov)
+        IFACE = IFACE.merge(COV, on="항체", how="left")
+        _cc = [c for c in ("CDRH3길이", "Fv순전하", "Fv소수성", "Fv길이")
+               if c in IFACE and IFACE[c].notna().sum() >= 3
+               and IFACE[c].std(ddof=1) > 0]
+        if _cc:
+            print("\n  경쟁 설명 — 계면강도가 사실 이것들의 변장인가 (Spearman)")
+            _t = pd.DataFrame([dict(경쟁변수=c,
+                    rho=round(float(st_.spearmanr(IFACE.계면강도, IFACE[c],
+                                                  nan_policy="omit")[0]), 2))
+                               for c in _cc])
+            _t["판정"] = np.where(_t.rho.abs() > 0.8,
+                                  "★ 거의 같다 — 7절-C 의 해석을 이것과 나눌 수 없다",
+                                  "구분된다")
+            display(_t)
+            if (_t.rho.abs() > 0.8).any():
+                print("     ★ 겹치는 변수가 있다. 7절-C 가 유의해도 '계면 때문' 이라고")
+                print("       단정할 수 없다 — 항체 5개로는 둘을 못 가른다. 그렇게 보고하라.")
+    else:
+        print("  → ★ 쓸 수 있는 계면 지표가 없다. 7절-C 를 건너뛴다.")
+
+    # ── 신뢰도 사전점검 — **라벨을 만지기 전에** 한다 ──────────────────────
+    # 지표 자체가 시끄러우면 상관이 √신뢰도 배로 눌린다. 항체 5개에서는 그것만으로
+    # 검정이 죽는다. ABB2 4모델의 흩어짐이 곧 '같은 항체를 다시 재면 얼마나 다른가' 다.
+    # ★ 사전 등록: 신뢰도 < 0.7 인 지표는 7절-C 에 못 들어간다. 결과와 무관한 규칙이다.
+    print("\n" + "="*76)
+    print("★ 신뢰도 사전점검 — 지표가 항체를 가를 만큼 안정한가 (라벨 보기 전)")
+    print("="*76)
+    rel = []
+    for c in ("ipTM", "계면_BSA", "계면_접촉밀도", "계면_소수성", "기준점_흔들림"):
+        if c not in IFACE or IFACE[c].notna().sum() < 3: continue
+        sdb = float(IFACE[c].std(ddof=1))
+        sdw = (float(IFACE.get(f"{c}_SD", pd.Series(dtype=float)).median())
+               if f"{c}_SD" in IFACE else np.nan)
+        r_ = max(1 - (sdw**2)/(sdb**2), 0.0) if (np.isfinite(sdw) and sdb > 1e-12) else np.nan
+        rel.append(dict(지표=c, 항체간SD=round(sdb, 4),
+                        항체내SD=round(sdw, 4) if np.isfinite(sdw) else np.nan,
+                        신뢰도=round(r_, 3) if np.isfinite(r_) else np.nan,
+                        감쇠배율=round(float(np.sqrt(r_)), 2) if np.isfinite(r_) else np.nan,
+                        판정=("★ 7절-C 부적격 (신뢰도 < 0.7)" if np.isfinite(r_) and r_ < 0.7
+                              else "적격" if np.isfinite(r_) else "항체내 SD 미측정")))
+    if rel:
+        REL = pd.DataFrame(rel); display(REL)
+        print("  관측 상관 ≈ 참 상관 × 감쇠배율. 시끄러운 지표는 있어도 못 쓴다.")
+        _bad = REL[(REL.신뢰도.notna()) & (REL.신뢰도 < 0.7)]
+        if IFACE_SRC and IFACE_SRC in set(_bad.지표):
+            print(f"  ★★ 고른 지표 '{IFACE_SRC}' 가 부적격이다. 7절-C 를 읽지 마라.")
+            IFACE_SRC = None
+    display(IFACE)
 ''')
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2302,6 +2728,502 @@ else:
 
 # ═════════════════════════════════════════════════════════════════════════════
 md(r'''
+## 7절-C · 계면 상호작용 — **같은 링커인데 블록마다 다른 이유**
+
+### 묻는 것 하나
+> 같은 만큼 열렸을 때, **계면이 센 Fv 가 그 열림을 더 많은 응집으로 바꾸는가.**
+
+7절 ① 은 "링커가 열면 나빠지는가" 를 물었다. 여기서는 **그 기울기 자체가 항체마다
+다른가, 그리고 그 차이를 계면 강도가 설명하는가** 를 묻는다.
+
+```
+y_ij = α_j  +  β·열림_ij  +  γ·(계면강도_j × 열림_ij)  +  ε        사전 등록: γ < 0
+       ↑         ↑                    ↑
+   항체 절편   링커 효과        계면이 셀수록 기울기가 가팔라진다
+   (중심화가    (7절 ①)          (여기가 새로 묻는 것)
+    지운다)
+```
+
+### 왜 상호작용이어야만 하는가 — 주효과로는 원리적으로 못 넣는다
+계면 강도는 **항체마다 상수**다. 7절의 항체 안 중심화는 항체마다 상수인 것을
+정의상 **완전히** 지운다. 모의로 확인하면 중심화 뒤 항체별 평균의 폭이 3×10⁻¹⁶ 다.
+
+그런데 **상호작용은 통과한다.** 열림분율이 항체 **안에서** 변하기 때문이다.
+모의에서 상호작용을 심으면 항체별 기울기가 계면강도를 r = 0.96 으로 따라간다.
+그래서 이 축은 상호작용으로만 물을 수 있고, 다행히 그게 물어야 할 형태이기도 하다.
+
+### 검정통계량과 귀무가설
+**통계량**은 항체별 기울기를 계면강도에 회귀한 **정밀도가중 t** 다.
+
+Δ일치도를 쓰면 안 된다. 항체 안에서 예측이 특징의 **양의 재척도**일 뿐이라
+일치도가 `sign(β + γS_j)` 만 보고, 통계량이 항체 수만큼의 **이진 부호**로 붕괴한다.
+모의에서 γ=3 일 때 Δ일치도 0.27 대 기울기회귀 0.92 다. (앞서 본 "γ=0 에서 검출률
+0.00" 도 보수적인 게 아니라 이 붕괴의 증상이었다 — 정상적인 정확검정이면 0.05 다.)
+Spearman 상관도 그보다는 낫지만 기울기회귀보다 25~30% 약하다.
+
+**귀무가설**: 항체별 기울기 벡터의 결합분포가 **S 라벨 치환에 불변**이다.
+→ 항체 수준 계면강도를 항체끼리 재배치한다. 항체 **안** 링커 배열은 안 건드린다
+(섞으면 β 까지 지워져 귀무가 γ=0 이 아니라 β=γ=0 이 되고, 주효과만 있어도 기각한다).
+
+### ★★ 작동점 교란 — 통제 안 하면 거짓양성이 0.41 까지 간다
+S 라벨 치환이 정확하려면 S 가 항체의 **작동점**과 무관해야 한다. 그런데 열역학이
+말하듯 **센 계면일수록 덜 열린다** — S 와 항체별 평균 열림분율이 기계적으로 얽혀 있다.
+그리고 y 가 x 에 조금이라도 곡선으로 붙으면 (로짓이 보장한다) 국소 기울기가
+작동점의 함수가 되어 **γ=0 인데도 기각된다.**
+
+모의 거짓양성 (γ를 정확히 0 으로 두고):
+
+| ρ(S, 평균열림) | 통제 없음 | Freedman–Lane 통제 |
+|---|---|---|
+| 0.0 | 0.054 | 0.053 |
+| 0.7 | **0.205** | 0.049 |
+| 0.9 | **0.331** | 0.051 |
+| 1.0 | **0.417** | 0.052 |
+
+→ **Freedman–Lane** 로 S 를 평균열림에 잔차화한 뒤 잔차만 섞는다. 검정력을 25~45%
+치르지만 이걸 안 하면 검정이 아니다.
+
+→ 그리고 **평균열림 자체를 경쟁 축으로 반드시 본다.** AF2 도 BSA 도 필요 없는 공짜
+경쟁자이고, 곡률만 있어도 귀무 자료의 48.5% 에서 발화한다. 그게 유의하면 계면강도가
+설명하는 것이 "계면" 인지 "항체마다 작동점이 다르다" 인지 가를 수 없다.
+
+### ★ 측정오차가 만드는 **검정력 천장**
+상호작용은 두 신뢰도의 **곱**으로 눌린다: `γ̂ = γ · λ_S · λ_O`.
+(주효과는 하나만 들어온다. 상호작용이 훨씬 가혹하다.)
+
+λ_S = λ_O = 0.7 이면 항체 5개에서 **어떤 효과크기로도 80% 검정력에 못 닿는다.**
+셀이 두 신뢰도와 유효 γ 를 찍고, 곱이 0.5 미만이면 그렇게 인쇄한다.
+
+**귀무가설**: 계면강도는 그 항체의 (log 열림 → 물성) 민감도와 무관하다.
+→ 항체 수준 계면강도 값을 **항체끼리 재배치**한다. 항체 안의 링커 배열은 안 건드린다.
+기울기는 관측된 그대로 두고, 거기에 어느 계면강도가 붙느냐만 끊는 것이다.
+
+항체가 k 개면 가짓수가 k! 이고, k ≤ 7 이면 **전부 세어 정확 p** 를 낸다.
+k=5 면 120가지, 최소 p 는 1/120 = 0.0083 이다. **양측**이므로 사실상 그 두 배다.
+
+그리고 이 분해능이 곧 **다중비교 예산**이다. Bonferroni 로 K 개를 보려면
+p ≤ 0.05/K 여야 하는데, K=2 만 넘어도 어떤 효과크기로도 기각이 불가능해진다.
+→ **확증 검정은 정확히 하나다**: 특징은 `열림분율`, 계면축은 y-무관 규칙이 고르는
+단 하나. 나머지(다른 계면 지표 · 다른 앙상블 특징 · Pearson r)는 **p 값 없이**
+표로만 찍는다. 숫자는 보여 주되 유의성은 주장하지 않는다.
+항체가 6개면 720가지, 7개면 5040가지라 이 제약이 빠르게 풀린다.
+
+### ★ 항체 5개에서 제일 중요한 것은 **반증 원장**이다
+항체가 k 개면 가능한 순서가 k! 가지다. k=5 면 **120뿐**이고, 완벽한 순서(|rho|=1)가
+우연히 나올 확률이 축 하나당 2/120 ≈ 1.7% 다. **축을 열 개 재면 대략 하나는 우연히
+완벽하게 정렬된다.** 계면강도 하나만 재고 "맞았다" 고 하면 그 하나를 본 것이다.
+
+→ 그래서 계면과 무관한 축들 — CDR-H3 길이, Fv 순전하, Fv 소수성, **난수 축 둘**,
+항체 이름 알파벳순 — 에도 **똑같은 검정**을 걸어 나란히 세운다.
+
+**사전 등록된 읽는 법**: 무관한 축 **3개 이상**이 |rho| ≥ 0.9 를 찍으면, 계면강도의
+p 가 얼마든 정보가 없다. 그때 유의한 것은 축이 아니라 **n=5 라는 사실**이다.
+
+### 그리고 지표가 시끄러우면 있어도 못 쓴다
+ABB2 4모델의 흩어짐이 곧 "같은 항체를 다시 재면 얼마나 다른가" 다.
+3절-C 가 지표마다 신뢰도 = 1 − SD_항체내²/SD_항체간² 를 재고,
+**신뢰도 < 0.7 이면 7절-C 에 못 들어간다.** 라벨을 만지기 전에 정하는 규칙이다.
+
+### 순서가 있다 — ★ **관문은 y 를 안 쓰는 것만이다**
+실측(y)을 쓰는 검정은 전부 **보고용이지 관문이 아니다.** 그래야 "결과를 보고 규칙을
+바꿨다" 는 의심이 원천적으로 없다.
+
+1. **y-무관 사전점검** (유일한 관문): S 가 실제로 변하는가, 레버리지가 한 항체에
+   쏠렸는가, S 가 항체별 정밀도·링커수·**평균 열림분율**과 얽혔는가, λ_S ≥ 0.7 인가.
+2. **확증 검정**: 정밀도가중 기울기회귀 + Freedman–Lane, 정확 순열, 양측. **하나뿐.**
+3. **취약성**: 항체 하나를 빼면 결론이 바뀌는가. 바뀌면 그렇게 보고한다.
+4. **반증 원장**: 무관한 축들과 **공짜 경쟁자(평균열림)** 도 같은 순서를 만드는가.
+5. **맥락**: 기울기 이질성 F. ★ 이건 **관문이 아니다** — 전방위 검정이라 방향을 아는
+   ② 보다 둔하다 (γ=1 에서 0.39 대 0.52). 게이트로 쓰면 0.27 로 떨어진다.
+
+### 이 검정만 포함 규칙을 완화한다
+7절 ① 의 쌍 일치도는 항체 안 **쌍**이 필요해 링커 3종 이상이었다. 여기서는 항체마다
+기울기 **하나**만 있으면 되므로 **링커 2종 이상**으로 넓힌다. 항체가 5개에서 7개로만
+늘어도 순열 가짓수가 120 → 5040 이라 **최소 양측 p 가 0.0165 → 0.0004** 로 내려간다.
+이 검정에서 가장 값싼 개선이다.
+5. **검정력**과 **다음 설계**: 지금 설계로 무엇이 보이는지 재고, 항체를 늘리는 쪽과
+   항체당 링커를 늘리는 쪽을 **직접 모의해서** 비교한다. 상호작용은 두 축 모두에
+   반응한다 — 항체를 늘리면 기울기 개수와 순열 가짓수가 늘고, 링커를 늘리면 기울기
+   하나하나가 정밀해져 상관의 감쇠가 준다. 어느 쪽이 값싼지는 셀이 표로 답한다.
+   7절 ⑥ 의 주효과 표와 답이 다를 수 있고, 다른 게 정상이다.
+
+### ★ 함정 하나 — 날 기울기를 쓰면 로짓 곡률이 가짜 신호를 만든다
+타깃이 로짓이라 `d(logit p)/dp = 1/(p(1−p))` 다. 즉 **기준선 HMW 가 낮은 항체는
+같은 %p 변화에도 로짓에서 훨씬 큰 기울기**가 나온다. 기준선이 계면 지표와 조금이라도
+상관되면 (충분히 그럴 수 있다 — 끈끈한 계면은 기준선 HMW 자체도 높일 테니)
+이 검정은 생물이 아니라 **변환의 곡률**을 잡는다.
+
+모의 데이터로 확인했다. 상호작용을 **안 심었는데** 날 기울기로는
+`rho = −0.9, 단측 p = 0.05` 가 나왔다. 기준선이 우연히 계면 지표를 따라갔기 때문이다.
+
+→ 그래서 민감도를 **항체 안 Pearson 상관** (= 기울기 × SD(x)/SD(y)) 으로 쓴다.
+SD(y) 가 같은 곡률 인자로 커지므로 인자가 정확히 상쇄된다. 검정통계량이 Spearman 이라
+단조변환에 둔감하니 잃는 것도 없다. 셀이 기준선과 계면강도의 상관도 같이 찍는다.
+
+### 미리 인정할 것 넷
+- **계면 강도의 대리지표는 친화도가 아니다.** ipTM 은 자기확신이고 BSA 는 면적이다.
+  둘 다 ΔG 가 아니다. 순위 정도로만 읽는다. 3절-B 에 이유를 자세히 적었다.
+- **조건화가 새면 부호가 뒤집힌다.** 평형만 놓고 보면 계면 친화도는 이량체 분율에서
+  정확히 **상쇄된다**(3절-B). 조건부로만 살아남는데, 그 조건화는 BioEmu 의 열림분율이
+  친화도를 반영할 때만 성립한다. 그래서 **양측** 검정이고, 부호가 곧 해석이다.
+- **경쟁 설명을 못 가른다.** 계면강도가 CDR-H3 길이 같은 알려진 응집 인자와 겹치면,
+  항체 5개로는 둘을 분리할 수 없다. 3절-C 가 그 표를 찍고, 겹치면 그렇게 보고한다.
+- **항체 5개다.** 아주 큰 상호작용만 보인다. 귀무가 나와도 대개는 "없다" 가 아니라
+  "이 표본으로는 못 본다" 다. ④ 가 그 구분을 숫자로 준다.
+''')
+
+code(r'''
+# ── 7절-C 핵심 · 항체별 기울기 → 계면강도 회귀 ─────────────────────────────
+# ★ Δ일치도로 하면 안 된다. 항체 안에서 예측이 특징의 **양의 재척도**일 뿐이라
+#   일치도가 sign(β+γS_j) 만 본다 — 통계량이 항체 수만큼의 **이진 부호**로 붕괴한다.
+#   모의: γ=3 에서 Δ일치도 0.27 vs 정밀도가중 기울기회귀 0.92.
+#   (우리가 앞서 본 "γ=0 에서 검출률 0.00" 도 보수적인 게 아니라 이 붕괴의 증상이었다.)
+from itertools import permutations
+from math import factorial, sqrt
+
+def antibody_slopes(y, x, groups):
+    """항체별 기울기 b_j 와 정밀도. y 는 이미 항체 안 중심화된 타깃.
+    σ² 는 **항체끼리 풀링**한다 — 링커 3종이면 잔차 자유도가 1 뿐이라
+    항체별 SE 는 못 믿는다."""
+    y = np.asarray(y, float); x = np.asarray(x, float)
+    g = pd.Series(groups).astype(str).values
+    rows, rss, dof = [], 0.0, 0
+    for ab in pd.unique(g):
+        m = (g == ab) & np.isfinite(y) & np.isfinite(x)
+        if m.sum() < 3: continue          # 기울기+절편+잔차 1개는 있어야 한다
+        yy = y[m] - y[m].mean(); xx = x[m] - x[m].mean()
+        sxx = float(xx @ xx)
+        if sxx < 1e-12: continue          # 항체 안에서 특징이 상수
+        b = float(xx @ yy / sxx); r = yy - b*xx
+        rss += float(r @ r); dof += m.sum() - 2
+        sy = yy.std(ddof=0)
+        rows.append(dict(항체=ab, k=int(m.sum()), b=b, Sxx=sxx,
+                         r_within=float(b*xx.std(ddof=0)/sy) if sy > 1e-12 else np.nan,
+                         mean_x=float(x[m].mean())))
+    T = pd.DataFrame(rows)
+    assert len(T), "기울기를 낼 수 있는 항체가 없다 (항체당 링커 3종 이상 필요)"
+    sig2 = rss/dof if dof > 0 else np.nan
+    T["se"] = np.sqrt(sig2/T.Sxx.values)
+    return T
+
+def _wls_t(b, S, w):
+    sw = w.sum(); d = S - (w*S).sum()/sw
+    den = float((w*d*d).sum())
+    if den <= 1e-300: return 0.0, 0.0
+    gam = float((w*d*(b - (w*b).sum()/sw)).sum()/den)
+    return gam, gam*sqrt(den)
+
+def _resid(v, C):
+    C = C - C.mean(); v = v - v.mean(); ss = float(C @ C)
+    return v - (float(C @ v)/ss)*C if ss > 1e-12 else v
+
+def interaction_test(slopes, S, covariate=None, sided="two", max_exact=5040,
+                     n_rand=20000, seed=0):
+    """항체 수준 S 라벨만 재배치하는 정확 순열 검정.
+
+    H0: 항체별 기울기 벡터의 결합분포가 **S 라벨 치환에 불변**이다.
+    ★ 항체 **안** 링커 라벨은 절대 안 섞는다. 섞으면 β 까지 지워져 귀무가
+      γ=0 이 아니라 β=γ=0 이 되고, 주효과만 있어도 기각한다.
+
+    ★★ covariate 를 주면 **Freedman–Lane** 로 그 항체 수준 교란을 통제한다.
+       여기서 반드시 줘야 하는 것은 **항체별 평균 열림분율**이다. 이유:
+       센 계면일수록 덜 열리므로 S 와 작동점이 기계적으로 얽혀 있고,
+       y 가 x 에 조금이라도 곡선으로 붙으면(로짓이 보장한다) 국소 기울기가
+       작동점의 함수가 되어 γ=0 인데도 기각된다.
+       모의 거짓양성: 통제 없이 ρ(S, 평균열림)=0.9 에서 **0.33**, 1.0 에서 **0.41**.
+       Freedman–Lane 를 걸면 전 구간 0.049~0.053 으로 돌아온다.
+    """
+    b = slopes.b.values.astype(float); S = np.asarray(S, float); m = len(b)
+    assert len(S) == m, "S 의 길이가 항체 수와 다르다"
+    w = 1.0/(slopes.se.values**2)          # y 정보에 의존하지 않는 가중
+    C = None if covariate is None else np.asarray(covariate, float)
+    exact = factorial(m) <= max_exact
+    P = (np.array(list(permutations(range(m)))) if exact else
+         np.vstack([np.arange(m),
+                    [np.random.default_rng(seed+t).permutation(m) for t in range(n_rand-1)]]))
+    if C is None:
+        bb = b; make = lambda p: S[p]
+    else:
+        Cc = C - C.mean()
+        fit = (float(Cc @ (S - S.mean()))/float(Cc @ Cc))*Cc if float(Cc @ Cc) > 1e-12 else 0*Cc
+        Sr = (S - S.mean()) - fit
+        bb = _resid(b, C); make = lambda p: Sr[p] + fit
+    T = np.empty(len(P)); G = np.empty(len(P))
+    for t, pm in enumerate(P):
+        Sp = make(pm)
+        if C is not None: Sp = _resid(Sp, C)
+        G[t], T[t] = _wls_t(bb, Sp, w)
+    og, ot = G[0], T[0]
+    p = (float((T >= ot - 1e-12).mean()) if sided == "greater" else
+         float((T <= ot + 1e-12).mean()) if sided == "less" else
+         float((np.abs(T) >= abs(ot) - 1e-12).mean()))
+    d = S - S.mean(); Sxx = float(d @ d)
+    return dict(항체수=m, gamma=round(og, 4),
+                se_gamma=round(abs(og/ot), 4) if abs(ot) > 1e-12 else np.nan,
+                t=round(ot, 3),
+                spearman=round(float(st_.spearmanr(b, S).statistic), 3) if m > 2 else np.nan,
+                순열p=round(p, 5), 정확=bool(exact), 순열수=len(P),
+                최소가능p=round(1.0/len(P), 5),
+                통제=("Freedman–Lane" if C is not None else "없음"),
+                레버리지=np.round((d**2)/Sxx, 2) if Sxx > 1e-12 else None,
+                _null=T, _obs=ot)
+
+def slope_heterogeneity(y, x, groups):
+    """항체별 기울기가 애초에 다른가 — 공통기울기 대 개별기울기 정확 F.
+    ★ 이걸로 상호작용 검정을 **막지 마라.** 모의에서 γ=1 일 때 상호작용 0.52 vs
+      이 F 0.39 이고, 게이트를 걸면 0.27 로 떨어진다. 보고용 맥락이지 관문이 아니다."""
+    y = np.asarray(y, float); x = np.asarray(x, float)
+    g = pd.Series(groups).astype(str).values
+    parts = []
+    for ab in pd.unique(g):
+        msk = (g == ab) & np.isfinite(y) & np.isfinite(x)
+        if msk.sum() < 3: continue
+        yy = y[msk]-y[msk].mean(); xx = x[msk]-x[msk].mean()
+        if float(xx @ xx) > 1e-12: parts.append((yy, xx))
+    m = len(parts); n = sum(len(a) for a, _ in parts)
+    if m < 2 or n - 2*m <= 0: return dict(F=np.nan, p=np.nan, 메모="자유도가 없다")
+    bc = sum(float(xx @ yy) for yy, xx in parts)/sum(float(xx @ xx) for _, xx in parts)
+    rss_r = sum(float((yy-bc*xx) @ (yy-bc*xx)) for yy, xx in parts)
+    rss_f = sum(float((yy-(xx @ yy/(xx @ xx))*xx) @ (yy-(xx @ yy/(xx @ xx))*xx))
+                for yy, xx in parts)
+    df1, df2 = m-1, n-2*m
+    F = ((rss_r-rss_f)/df1)/(rss_f/df2)
+    return dict(F=round(float(F), 3), df=(df1, df2), p=round(float(st_.f.sf(F, df1, df2)), 4))
+print("7절-C 함수 준비 완료")
+''')
+
+code(r'''
+# ── 7절-C 판정 ─────────────────────────────────────────────────────────────
+IFACE_RESULT = None
+_ok = ("ML_RESULT" in dir() and IFACE_SRC and len(IFACE) and "계면강도" in IFACE.columns)
+if not _ok:
+    print("7절-C 건너뜀 —", "7절이 안 돌았다" if "ML_RESULT" not in dir()
+          else "쓸 수 있는 계면 지표가 없다 (3절-B·3절-C 를 보라)")
+else:
+    # ★ 이 검정만 포함 규칙을 **링커 3종 이상**으로 유지한다. 링커 2종이면 항체 안
+    #   자유도가 0 이라 기울기의 오차를 못 재고, 정밀도 가중이 성립하지 않는다.
+    U = USE.merge(IFACE[["항체", "계면강도"]], on="항체", how="left")
+    U = U[U.계면강도.notna() & U[HC].notna()].reset_index(drop=True)
+    _bb = U.groupby(GROUP).링커.nunique()
+    U = U[U[GROUP].isin(_bb[_bb >= 3].index)].reset_index(drop=True)
+    if U[GROUP].nunique() < 4:
+        print(f"7절-C 건너뜀 — 쓸 수 있는 항체가 {U[GROUP].nunique()}개뿐이다 (4개 이상 필요)")
+    else:
+        Yi = make_target(U, HC, block=GROUP, higher_is_worse=HIGHER_IS_WORSE).values
+        # ★ x 는 **로그 열림분율**이다. 선형을 쓰면 축의 곡률만으로 가짜 신호가 난다.
+        _op = U[PRIMARY].values.astype(float)
+        _fl = max(0.5/float(np.nanmedian(U.n프레임)) if "n프레임" in U else 1/300., 1e-4)
+        _lx = np.log(np.clip(_op, _fl, None))
+        SL = antibody_slopes(Yi, _lx, U[GROUP].values)
+        _S  = U.drop_duplicates(GROUP).set_index(GROUP).계면강도
+        Sv  = np.array([float(_S[a]) for a in SL.항체])
+        k   = len(SL)
+        print("="*76)
+        print(f"★ 7절-C · 계면 상호작용 — 지수 = {IFACE_SRC}")
+        print("="*76)
+        print(f"  {IFACE_WHY}")
+        print(f"  항체 {k}개 · 구성체 {len(U)} · 순열 {factorial(k) if factorial(k)<=5040 else '무작위'}가지")
+        print("  모형:  y = α_항체 + β·log(열림) + γ·(계면강도 × log(열림))")
+        print("  ★ 계면강도 **주효과는 못 넣는다** — 항체마다 상수라 중심화가 지운다.")
+        print("    자료가 말할 수 있는 건 **항체별 기울기 b_j = β + γ·S_j** 뿐이고,")
+        print("    γ 는 그 기울기 5개를 S 5개에 회귀해서만 나온다.")
+        _L = sorted(U.길이.unique()); _below = [x for x in _L if x < 13]
+        print(f"\n  링커 길이: {_L}")
+        print("  ★ 전부 13 aa 이상 — Holliger 1993 의 diabody 임계(3~12 aa) **위**다."
+              if not _below else f"  ★ {_below} 는 diabody 임계 아래 — 강제 이량체 영역이다.")
+        if not _below:
+            print("    즉 강제 이량체 영역이 아니다. 도메인 교환은 **부수 경로**일 것이고,")
+            print("    그만큼 γ 가 작을 것을 각오해야 한다. 귀무가 나와도 놀랄 일이 아니다.")
+
+        # ── ① y-무관 사전점검 — **관문은 여기뿐이다** ──────────────────────
+        print("\n" + "─"*76)
+        print("① y-무관 사전점검 — 실측을 보기 전에 통과해야 하는 것")
+        print("─"*76)
+        print("  ★ 실측(y) 을 쓰는 검정은 **보고용이지 관문이 아니다.** 관문은 y 를 안 쓰는")
+        print("    것만이다 — 그래야 '결과를 보고 규칙을 바꿨다' 는 의심이 원천적으로 없다.\n")
+        d_ = Sv - Sv.mean(); Sxx_ = float(d_ @ d_)
+        lev = (d_**2)/Sxx_ if Sxx_ > 1e-12 else np.full(k, np.nan)
+        _mx = SL.mean_x.values
+        w_ = 1.0/SL.se.values**2
+        chk = [dict(항목="S 변동계수", 값=round(float(np.std(Sv, ddof=1)/abs(np.mean(Sv))), 4)
+                    if abs(np.mean(Sv)) > 1e-12 else np.nan, 판정=""),
+               dict(항목="γ 유효정보 Σw·d²", 값=round(float((w_*d_*d_).sum()), 3),
+                    판정=f"se(γ) = {1/sqrt(max(float((w_*d_*d_).sum()),1e-300)):.3f}"),
+               dict(항목="최대 레버리지", 값=f"{SL.항체.values[int(np.argmax(lev))]} ({lev.max():.2f})",
+                    판정="★ 한 항체가 S축을 지배한다 — 5점 회귀가 사실상 그 점 하나다"
+                         if lev.max() > 0.6 else ""),
+               dict(항목="ρ(S, 항체별 SE)", 값=round(float(st_.spearmanr(Sv, SL.se).statistic), 3),
+                    판정="★ 정밀도가 S 를 따라간다 — 순열 교환가능성이 의심스럽다"
+                         if abs(st_.spearmanr(Sv, SL.se).statistic) > 0.8 else ""),
+               dict(항목="★ ρ(S, 항체별 평균 열림)",
+                    값=round(float(st_.spearmanr(Sv, _mx).statistic), 3),
+                    판정="★★ 작동점 교란이 크다 — Freedman–Lane 통제가 **필수**다"),
+               # ★ 항체 **안** 열림분율 범위가 좁으면 기울기 자체가 안 잡힌다.
+               #   그러면 상호작용은 볼 수도 없다. 모의: 범위를 1/3 로 줄이면
+               #   같은 γ=2 에서 검출률 0.78 → 0.18.
+               dict(항목="항체 안 log(열림) 범위 중앙",
+                    값=round(float(np.median([np.ptp(_lx[U[GROUP].values == a])
+                                              for a in SL.항체])), 2),
+                    판정="★★ 링커가 열림분율을 거의 안 벌려 놓았다 — 기울기가 안 잡힌다"
+                         if np.median([np.ptp(_lx[U[GROUP].values == a])
+                                       for a in SL.항체]) < 0.7 else "")]
+        display(pd.DataFrame(chk))
+        print("  마지막 줄이 이 검정의 급소다. 센 계면일수록 덜 열리므로 S 와 작동점이")
+        print("  기계적으로 얽혀 있고, y 가 x 에 조금이라도 곡선으로 붙으면 국소 기울기가")
+        print("  작동점의 함수가 되어 **γ=0 인데도 기각된다.** 모의 거짓양성 0.33~0.41.")
+
+        # ── ② 확증 검정 — **정확히 하나다** ────────────────────────────────
+        print("\n" + "─"*76)
+        print("② 확증 검정 — 정밀도가중 기울기회귀 + Freedman–Lane, 양측")
+        print("─"*76)
+        IT = interaction_test(SL, Sv, covariate=_mx, sided="two")
+        SLp = SL.assign(계면강도=np.round(Sv, 3), 레버리지=IT["레버리지"])
+        display(SLp[["항체", "k", "b", "se", "r_within", "mean_x", "계면강도", "레버리지"]].round(3))
+        print(f"  γ̂ = {IT['gamma']}  ± {IT['se_gamma']}   (t = {IT['t']})")
+        print(f"  Spearman(기울기, 계면강도) = {IT['spearman']}   ← 5점 순서. 이게 결과의 실체다")
+        print(f"  {'정확' if IT['정확'] else '무작위'} 순열 {IT['순열수']}가지 · 통제 {IT['통제']}")
+        print(f"  **양측 p = {IT['순열p']}**   (최소 가능 {IT['최소가능p']})")
+        print("")
+        print("  ── 부호를 어떻게 읽나 ───────────────────────────────────────")
+        print("  γ < 0 : 조건부 예측대로. 같은 만큼 열려도 센 계면이 더 많은 응집으로 간다")
+        print("          ([D] ∝ [M_open]²/Kd² 의 Kd 항).")
+        print("  γ > 0 : 조건화가 샜다. 주변부 관계가 새어 들어온 것이고 그쪽은 방향이 반대다")
+        print("          (약한 계면 → 더 열림 → 더 응집. Arndt/Plückthun 1998 계열).")
+        if IT["순열p"] < ALPHA:
+            print(f"\n  → **유의하다.** 부호는 {'조건부' if IT['gamma'] < 0 else '주변부(조건화가 샌)'} 방향.")
+        else:
+            print(f"\n  → 유의하지 않다." + (f"  ★ 단 최소 가능 p 가 {IT['최소가능p']} 라"
+                  " 애초에 못 닿았을 수도 있다." if IT["최소가능p"] > ALPHA else ""))
+
+        # ── ②-B 한 항체를 빼면 무너지는가 ─────────────────────────────────
+        print("\n" + "─"*76)
+        print("②-B 취약성 — 항체 하나를 빼면 결론이 바뀌는가")
+        print("─"*76)
+        loo = []
+        for i in range(k):
+            m_ = np.ones(k, bool); m_[i] = False
+            if m_.sum() < 4: continue
+            r_ = interaction_test(SL[m_].reset_index(drop=True), Sv[m_],
+                                  covariate=_mx[m_], sided="two")
+            loo.append(dict(뺀항체=SL.항체.values[i], 남은항체=int(m_.sum()),
+                            gamma=r_["gamma"], 양측p=r_["순열p"]))
+        if loo:
+            LOO = pd.DataFrame(loo); display(LOO)
+            if IT["순열p"] < ALPHA and (LOO.양측p > 0.20).any():
+                print("  ★ 한 항체를 빼면 p 가 0.20 을 넘는다 — **취약한 결론**이다. 그렇게 보고하라.")
+            elif IT["순열p"] < ALPHA:
+                print("  → 어느 항체를 빼도 버틴다.")
+
+        # ── ②-C ★ 반증 원장 ───────────────────────────────────────────────
+        print("\n" + "─"*76)
+        print("②-C 반증 원장 — 무관한 축들도 같은 순서를 만드는가")
+        print("─"*76)
+        print(f"  항체 {k}개면 가능한 순서가 {factorial(k)}가지다. |rho|=1 이 우연히 나올")
+        print(f"  확률이 축 하나당 {2/max(factorial(k),1):.3f} — 축을 열 개 재면 대략 하나는 맞는다.")
+        print("  ★ 무관한 축 3개 이상이 |rho| ≥ 0.9 를 찍으면, 계면강도의 p 가 얼마든 정보가 없다.")
+        print("  ★ 그리고 **평균열림** 축을 반드시 본다 — 이건 AF2 도 BSA 도 필요 없는 공짜")
+        print("    경쟁자이고, 곡률만 있어도 48.5% 의 귀무 자료에서 발화한다.\n")
+        IFX = IFACE.set_index("항체")
+        _rg = np.random.default_rng(12345)
+        cand = {}
+        for c in ("ipTM", "계면PAE", "계면_BSA", "계면_접촉밀도", "계면_소수성",
+                  "기준점_흔들림", "CDRH3길이", "Fv순전하", "Fv소수성", "Fv길이"):
+            if c in IFACE.columns and IFACE[c].notna().sum() >= k:
+                cand[c] = np.array([float(IFX[c].get(a, np.nan)) for a in SL.항체])
+        cand["★평균열림"] = _mx.copy()                       # 공짜 경쟁자
+        cand["난수축1"] = _rg.normal(0, 1, k)
+        cand["난수축2"] = _rg.normal(0, 1, k)
+        cand["이름순"]  = np.argsort(np.argsort(SL.항체.values)).astype(float)
+        rows = []
+        for nm, v in cand.items():
+            if not np.isfinite(v).all() or np.std(v) < 1e-12: continue
+            # ★ 평균열림 자체를 볼 때는 자기 자신을 통제할 수 없다
+            r_ = interaction_test(SL, v, covariate=(None if nm == "★평균열림" else _mx),
+                                  sided="two")
+            rows.append(dict(축=nm,
+                             종류=("계면" if nm in ("ipTM","계면PAE","계면_BSA",
+                                                   "계면_접촉밀도","계면_소수성")
+                                   else "공짜경쟁자" if nm == "★평균열림"
+                                   else "음성대조" if nm in ("난수축1","난수축2","이름순")
+                                   else "경쟁설명"),
+                             rho=r_["spearman"], 양측p=r_["순열p"]))
+        if rows:
+            FLG = pd.DataFrame(rows).sort_values("양측p").reset_index(drop=True)
+            display(FLG)
+            _o = FLG[(FLG.rho.abs() >= 0.9) & (~FLG.종류.isin(["계면"]))]
+            _fr = FLG[FLG.축 == "★평균열림"]
+            if len(_fr) and _fr.양측p.iloc[0] < ALPHA:
+                print("  ★★ **평균열림만으로도 유의하다.** 그러면 계면강도가 설명하는 것이")
+                print("     '계면' 인지 '항체마다 작동점이 다르다' 인지 가를 수 없다.")
+                print("     후자는 ipTM 도 BSA 도 필요 없는 설명이다. 그렇게 보고하라.")
+            if len(_o) >= 3:
+                print("  ★★ 무관한 축 3개 이상이 같은 순서를 만들었다.")
+                print("     **계면강도의 결과는 정보가 없다.** 항체를 늘리기 전에는 읽지 마라.")
+            elif len(_o):
+                print(f"     겹치는 축: {list(_o.축)} — 계면과 이것들을 못 가른다.")
+            else:
+                print("     무관한 축들은 조용하다.")
+
+        # ── ③ 맥락 · 기울기가 애초에 다른가 (관문 아님) ────────────────────
+        print("\n" + "─"*76)
+        print("③ 맥락 — 항체별 기울기가 애초에 다른가 (보고용, **관문 아님**)")
+        print("─"*76)
+        HT = slope_heterogeneity(Yi, _lx, U[GROUP].values)
+        print(f"  공통기울기 대 개별기울기 F = {HT['F']} · df = {HT.get('df')} · p = {HT['p']}")
+        print("  ★ 이게 귀무여도 ② 를 버리지 않는다. 이 F 는 전방위(m−1 자유도)라")
+        print("    방향을 아는 ② 보다 둔하다 — 모의에서 γ=1 일 때 0.39 vs 0.52 이고,")
+        print("    게이트로 쓰면 0.27 로 떨어진다. 둔한 검정으로 예민한 검정을 막는 셈이다.")
+
+        # ── ④ 신뢰도와 **검정력 천장** ────────────────────────────────────
+        print("\n" + "─"*76)
+        print("④ 검정력 — 측정오차가 만드는 **천장**")
+        print("─"*76)
+        print("  상호작용은 두 신뢰도의 **곱**으로 눌린다:  γ̂ = γ · λ_S · λ_O.")
+        print("  (주효과는 하나만 들어온다. 상호작용이 훨씬 가혹하다.)\n")
+        lamS = float(REL.set_index("지표").신뢰도.get(IFACE_SRC, np.nan)) if "REL" in dir() else np.nan
+        lamO = float(RELY.get(PRIMARY, np.nan)) if "RELY" in dir() else np.nan
+        print(f"  λ_S ({IFACE_SRC}) = {lamS if lamS==lamS else '미측정'}   "
+              f"λ_O ({PRIMARY}) = {lamO if lamO==lamO else '미측정'}")
+        if np.isfinite(lamS) and np.isfinite(lamO):
+            print(f"  → **유효 γ = 실제 γ × {lamS*lamO:.2f}**")
+            if lamS*lamO < 0.5:
+                print("     ★★ 곱이 0.5 미만이다. 이 설계에서는 **어떤 효과크기로도**")
+                print("       80% 검정력에 못 닿는다. 귀무가 나와도 '없다' 가 아니라")
+                print("       '측정이 이만큼 시끄러우면 애초에 못 본다' 가 맞다.")
+        rows = []
+        rng = np.random.default_rng(0)
+        for g_ in (0.0, 1.0, 2.0, 4.0):
+            hit = 0; NS = 60
+            for _ in range(NS):
+                yy = np.empty(len(Yi))
+                for t, ab in enumerate(SL.항체):
+                    msk = (U[GROUP].values == ab)
+                    xx = _lx[msk] - _lx[msk].mean()
+                    yy[msk] = (1.0 + g_*(Sv[t]-Sv.mean())/max(Sv.std(ddof=1),1e-9))*xx \
+                              + rng.normal(0, 1.0, msk.sum())
+                    yy[msk] -= yy[msk].mean()
+                try:
+                    T_ = antibody_slopes(yy, _lx, U[GROUP].values)
+                    hit += int(interaction_test(T_, Sv, covariate=_mx,
+                                                sided="two")["순열p"] <= ALPHA)
+                except Exception: pass
+            rows.append(dict(효과크기=g_, 검출률=round(hit/NS, 3),
+                             유효효과=round(g_*lamS*lamO, 2)
+                             if (np.isfinite(lamS) and np.isfinite(lamO)) else np.nan))
+        PW2 = pd.DataFrame(rows); display(PW2)
+        print("  ★ '유효효과' 열로 읽어라. 명목 γ 가 아니라 감쇠된 값이 실제로 보이는 것이다.")
+        print("  ★ 이 질문에서 가장 값싼 개선은 **항체를 늘리는 것**이다 —")
+        print(f"    지금 {k}개면 순열 {factorial(k)}가지, 최소 p {1/factorial(k):.4f}.")
+        print(f"    {k+1}개면 {factorial(k+1)}가지, {k+2}개면 {factorial(k+2)}가지다.")
+        print("    (7절 ⑥ 의 주효과는 링커를 늘리는 쪽이었다. 다른 질문이라 답이 다르다.)")
+        IFACE_RESULT = dict(지수=IFACE_SRC, 이유=IFACE_WHY, 기울기표=SLp,
+                            상호작용=IT, 이질성=HT, 검정력=PW2,
+                            반증원장=(FLG if rows else None), lamS=lamS, lamO=lamO)
+''')
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+md(r'''
 ## 8절 · 대리모형 — "가상 데이터셋" 의 정직한 형태
 
 ### 먼저, 하면 안 되는 것부터 — 이유를 셋으로 적는다
@@ -2764,6 +3686,8 @@ md(r'''
 | `{OUT}/ref_angles.csv` | 항체별 기준점 각도. Δ 를 다시 정의할 때 ABangle 없이 된다 |
 | `{OUT}/antibody_keys.csv` | **(D1,D2,블록,배향) → 항체 키.** v09 폴더 이름을 고정한다 |
 | **`{OUT}/geom.csv`** | 구조 한 줄씩 — 링커 접촉 · **나선도** · Rg · 신장도 |
+| **`{OUT}/interface.csv`** | **항체 한 줄씩** — VH-VL 계면 BSA · 접촉밀도 · 소수성 · 흔들림 · 경쟁 설명 |
+| `{OUT}/iptm.csv` | 항체 한 줄씩 — AF2-Multimer ipTM · pTM · 계면 PAE |
 | **`{OUT}/features.csv`** | **구성체 한 줄씩** — ML 이 먹는 표 |
 | **`{OUT}/insilico_screen.csv`** | 안 돌려본 링커까지의 예측 (후보 정렬용) |
 | `{OUT}/fig_landscape.png` · `fig_channel.png` · `fig_ml.png` | 그림 셋 |
@@ -2795,7 +3719,20 @@ md(r'''
   MDE 보다 작은 효과는 이 설계로 애초에 못 본다.
   "효과가 없다" 가 아니라 **"MDE 보다 작은 효과는 못 봤다"** 가 맞다.
 
-**4단계 · 길이 말고 다른 게 있는가** (7절 ③, 증분 검정)
+**4단계 · 같은 링커인데 왜 블록마다 다른가** (7절-C, 계면 상호작용)
+- 항체별 기울기를 계면강도에 회귀한다. 정밀도가중, Freedman–Lane, 정확 순열, **양측**.
+- ★ **주효과로는 물을 수 없다.** 계면강도가 항체마다 상수라 항체 안 중심화가 지운다.
+  상호작용만 살아남고, 다행히 그게 물어야 할 형태이기도 하다.
+- ★ **관문은 ① 의 y-무관 점검뿐이다.** 기울기 이질성 F 는 관문이 아니다 — 전방위라
+  방향을 아는 본검정보다 둔하고, 게이트로 쓰면 검정력을 절반 가까이 잃는다.
+- ★ **②-C 반증 원장을 반드시 같이 읽는다.** 특히 **평균열림** 축 —
+  AF2 도 BSA 도 필요 없는 공짜 경쟁자이고, 그게 유의하면 계면강도가 설명하는 것이
+  "계면" 인지 "항체마다 작동점이 다르다" 인지 가를 수 없다.
+- ★ **④ 의 λ_S·λ_O 를 본다.** 곱이 0.5 미만이면 어떤 효과크기로도 80% 검정력에
+  못 닿는다. 귀무가 나와도 "없다" 가 아니라 "이만큼 시끄러우면 애초에 못 본다" 다.
+- 부호가 음수면 조건부 예측 방향, 양수면 조건화가 새어 주변부 관계가 보인 것이다.
+
+**5단계 · 길이 말고 다른 게 있는가** (7절 ③, 증분 검정)
 - 증분 p < 0.05 → **BioEmu 를 돌린 값어치가 여기 있다.**
 - p ≥ 0.05 → 앙상블은 길이 위에 아무것도 더하지 않았다. 그것도 결과다.
 - ★ 단, 6절-B 의 교란 원장이 그 특징을 **"길이의 결정적 함수"** 로 판정했다면
@@ -2834,7 +3771,18 @@ md(r'''
    **실제로 만들어 재봐야** 한다. 8절이 `StageB몫` 을 찍는다 — 그 값이 0.7 을 넘으면
    불확실성의 대부분이 라벨 26개에서 오는 것이고, 셀이 스스로 그렇게 인쇄한다.
 
-6. **`physical_steering` 은 논문에 없는 저장소 수정판이다.** SMC 재표집이 배치 안
+6. **평형만 놓고 보면 계면 친화도는 이량체 분율에서 정확히 상쇄된다.**
+   단량체는 계면이 하나, 이량체는 둘, 열리는 데 하나가 드니 지수가 상쇄된다
+   (`tools/thermo_check.py` 로 확인: Kd 3.5 자릿수에 이량체 분율 0.001988 → 0.001992).
+   우리가 **조건부**로 묻기 때문에만 살아남는다 — 열린 분율을 BioEmu 로 측정해
+   되돌려 넣지 않기 때문이다. 그 조건화가 새면 부호가 뒤집힌다. 그래서 양측이다.
+
+7. **계면 강도의 대리지표는 친화도가 아니다.** ipTM 은 "AF2 가 이 배치를 얼마나
+   확신하나" 이고 BSA 는 면적이다. 둘 다 ΔG 가 아니다. 그리고 VH-VL 계면은 PDB 에서
+   가장 흔한 단백질-단백질 계면이라 ipTM 이 전부 0.9 근처에 몰려 변별력이 없을 수 있다 —
+   3절-C 가 변동계수를 재서 그 경우 **사전 등록된 규칙대로 BSA 로 자동 전환**한다.
+
+8. **`physical_steering` 은 논문에 없는 저장소 수정판이다.** SMC 재표집이 배치 안
    프레임에 공통 조상을 만들 수 있고, 그러면 "통계적으로 독립" 이라는 논문의 보장이
    따라오지 않는다. 6절-E 가 ICC 로 유효 표본수를 직접 잰다.
 ''')

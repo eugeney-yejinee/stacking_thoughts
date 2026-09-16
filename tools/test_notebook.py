@@ -25,15 +25,19 @@ NB = os.path.join(ROOT, "notebooks", "FvFlow_v12.ipynb")
 
 # 실행할 셀 — 6절 특징표부터 9절 그림까지 (Drive·GPU 를 안 쓴다)
 ANALYSIS_CELLS = {
-    17: "6절 특징표",
-    18: "6절-B 두 원장",
-    20: "6절-C 채널 판정 (2원 분산분석)",
-    21: "6절-D 국소 채널 시험 (EAAAK vs G4S)",
-    22: "6절-E 표본 독립성 (ICC)",
-    24: "7절 ML 핵심",
-    25: "7절-B 판정",
-    27: "8절 대리모형",
-    29: "9절 그림",
+    10: "3절-B 계면 강도 (캐시 재사용 경로)",
+    11: "3절-C ipTM + 사전 등록 전환 규칙",
+    20: "6절 특징표",
+    21: "6절-B 두 원장",
+    23: "6절-C 채널 판정 (2원 분산분석)",
+    24: "6절-D 국소 채널 시험 (EAAAK vs G4S)",
+    25: "6절-E 표본 독립성 (ICC)",
+    27: "7절 ML 핵심",
+    28: "7절-B 판정",
+    30: "7절-C 핵심 함수",
+    31: "7절-C 판정",
+    33: "8절 대리모형",
+    35: "9절 그림",
 }
 
 
@@ -57,8 +61,10 @@ def fake_cons(n_block=5, plant_composition=True):
     for b in range(1, n_block + 1):
         base = rng.uniform(2, 20)                       # 블록마다 HMW 바닥이 다르다
         for i, L in enumerate(lens):
-            d1 = "E" * 120
-            d2 = "D" * 118
+            # 항체마다 서열을 조금씩 다르게 — 3절-C 의 경쟁 설명 표가 실제로 돌게 한다
+            # (전부 같으면 모든 공변량의 SD 가 0 이라 그 코드 경로가 안 걸린다)
+            d1 = ("EVQLVESGGG" + "K" * b + "E" * (110 - b))[:120].ljust(120, "A")
+            d2 = ("DIQMTQSPSS" + "R" * (6 - b) + "D" * (102 + b))[:118].ljust(118, "G")
             s = "GGGGS" * (L // 5)
             rows.append(dict(
                 블록=str(b), 항체=f"실측{b}_B{b}_HL", 포맷="순수", 배향="HL",
@@ -77,8 +83,9 @@ def fake_cons(n_block=5, plant_composition=True):
     return pd.DataFrame(rows)
 
 
-def fake_frames(CONS, plant_composition=True, seed=0):
-    """구성체마다 150 프레임. **길이 효과는 꼭 심고**, 조성 효과는 스위치로."""
+def fake_frames(CONS, plant_composition=True, seed=0, iface_gamma=0.0, IFACE=None):
+    """구성체마다 150 프레임. **길이 효과는 꼭 심고**, 조성 효과는 스위치로.
+    iface_gamma 를 주면 실측 HMW 에 **계면강도 × 열림** 상호작용을 심는다."""
     rng = np.random.default_rng(seed)
     rows = []
     comp_shift = {"G4S": 0.0, "GS": 0.05, "EAAAK": 0.9, "PAS": 0.5,
@@ -100,6 +107,35 @@ def fake_frames(CONS, plant_composition=True, seed=0):
                              설계길이=r.설계길이, 생성기="BioEmu",
                              태그=f"{r.링커}__BioEmu_s{i}",
                              **{HC: r[HC]}, **d))
+    return pd.DataFrame(rows)
+
+
+def fake_iface(CONS, seed=0):
+    """항체 수준 계면 지표. ipTM 은 일부러 **변별력 없게**(CV<5%) 만들어
+    노트북이 사전 등록 규칙대로 BSA 로 자동 전환하는지 본다."""
+    rng = np.random.default_rng(seed)
+    abs_ = sorted(CONS[~CONS.합성].항체.unique())
+    rows = []
+    for i, ab in enumerate(abs_):
+        rows.append(dict(항체=ab,
+                         계면_BSA=700 + 60*i + rng.normal(0, 8),      # 진짜 변별력
+                         계면_접촉수=180 + 12*i,
+                         계면_잔기수=44 + i,
+                         계면_접촉밀도=4.0 + 0.2*i,
+                         계면_소수성=0.42 + 0.02*i,
+                         기준점_흔들림=0.6 - 0.05*i,
+                         n모델=4,
+                         # ★ 신뢰도 사전점검이 요구하는 항체내 SD (ABB2 4모델 흩어짐)
+                         계면_BSA_SD=12.0, 계면_접촉밀도_SD=0.05,
+                         계면_소수성_SD=0.004, 기준점_흔들림_SD=0.02,
+                         ipTM=0.91 + rng.normal(0, 0.004),            # CV ≈ 0.4% → 전환
+                         ipTM_SD=0.01, pTM=0.88, 계면PAE=4.0 + 0.1*i,
+                         계면PAE_SD=0.05,
+                         nH=120, nL=118))
+    # 합성 구성체의 숙주 항체도 들어가야 3절-B 표가 CONS 를 덮는다
+    for ab in CONS[CONS.합성].항체.unique():
+        if ab not in {r["항체"] for r in rows}:
+            rows.append(dict(rows[0], 항체=ab))
     return pd.DataFrame(rows)
 
 
@@ -183,7 +219,7 @@ def base_globals(CONS, E, G, out_dir):
         # 4-B절
         MOTIF=MOTIF, PANEL_LENGTHS=PANEL_LENGTHS,
         # 5절
-        E=E, G=G, CSV_GEOM=f"{out_dir}/geom.csv", REUSE_CSV=False,
+        E=E, G=G, CSV_GEOM=f"{out_dir}/geom.csv", REUSE_CSV=True,
         CONTACT_CUT=10.0,
         GEOM_FEATS=["링커접촉_잔기당", "링커밀착율", "링커최근접",
                     "링커Rg_잔기당", "링커신장도", "링커나선도", "링커i_i4",
@@ -195,14 +231,45 @@ def base_globals(CONS, E, G, out_dir):
     return g
 
 
-def run(plant_composition=True, label=""):
+def plant_interaction(CONS, IFACE, gamma, seed=0):
+    """실측 HMW 를 다시 만든다: 계면이 셀수록 **긴 링커의 벌칙이 커진다.**
+    항체 안 로짓 중심화를 통과해야 하는 것이 바로 이 항이다."""
+    rng = np.random.default_rng(seed)
+    S = IFACE.set_index("항체").계면_BSA
+    z = (S - S.mean()) / S.std(ddof=1)
+    C = CONS.copy()
+    for i, r in C.iterrows():
+        if r.합성: continue
+        base = 6.0 + 3.0 * (hash(r.항체) % 5)
+        op = (r.길이 - 15) / 10.0                      # 길이가 곧 열림의 대리
+        C.loc[i, HC] = base + 3.0*op + gamma*float(z.get(r.항체, 0.0))*op \
+                       + rng.normal(0, 0.6)
+    return C
+
+
+def run(plant_composition=True, label="", iface_gamma=0.0):
     srcs, kinds = load_cells()
     out = os.path.join("/tmp", "fvflow_nbtest")
     os.makedirs(out, exist_ok=True)
     CONS = fake_cons()
+    IFACE0 = fake_iface(CONS)
+    if iface_gamma:
+        CONS = plant_interaction(CONS, IFACE0, iface_gamma)
     E = fake_frames(CONS, plant_composition)
     G = fake_geom(E, plant_composition)
     g = base_globals(CONS, E, G, out)
+    # ★ 3절-B·3절-C 를 **캐시 재사용 경로로** 실제 실행시킨다. csv 를 미리 써 두면
+    #   두 셀이 계산을 건너뛰고 병합·전환 규칙만 돈다 — 시험하고 싶은 게 바로 그 부분이다.
+    ifc = [c for c in IFACE0.columns
+           if c not in ("ipTM", "ipTM_SD", "pTM", "계면PAE", "nH", "nL")]
+    IFACE0[ifc].to_csv(f"{out}/interface.csv", index=False, encoding="utf-8-sig")
+    IFACE0[["항체", "ipTM", "ipTM_SD", "pTM", "계면PAE", "nH", "nL"]].to_csv(
+        f"{out}/iptm.csv", index=False, encoding="utf-8-sig")
+    g["REFD"] = lambda ab: f"{out}/{ab}"
+    g["write_pair"] = lambda *a, **k: None
+    g["abangle6_many"] = lambda *a, **k: {}
+    g["venv311"] = lambda *a, **k: "/tmp/venv"
+    g["sh"] = lambda *a, **k: False
 
     print("=" * 78)
     print(f"노트북 분석 셀 실행  {label}")
@@ -267,6 +334,29 @@ def main():
     else:
         print("  OK  증분 검정 — 길이 위의 증분 없음 (열림분율은 길이의 변장이므로 맞다)")
 
+    # 3절-C 사전 등록 전환 규칙 — ipTM 이 변별력 없으니 BSA 로 갈아타야 한다
+    assert g.get("IFACE_SRC") == "계면_BSA", \
+        f"ipTM 이 변별력 없는데 전환이 안 됐다: {g.get('IFACE_SRC')}"
+    print(f"  OK  3절-C 전환 규칙 — ipTM(CV<5%) → {g['IFACE_SRC']} 로 자동 전환")
+
+    # 7절-C 계면 상호작용 — 안 심었으니 유의하면 안 된다
+    IR = g.get("IFACE_RESULT")
+    if IR is None:
+        fails.append("7절-C 가 안 돌았다 (IFACE_RESULT 없음)")
+    else:
+        # ★ 한 번 추첨에서 유의한 것은 **정상**이다 — 올바르게 보정된 검정은
+        #   귀무에서도 5% 는 유의하게 나온다. 영점 판정은 ④ 검정력 곡선의
+        #   β=0 행(60회 반복)으로 한다. 여기서는 값이 나오는지만 본다.
+        pp = IR["상호작용"]["순열p"]
+        print(f"  OK  7절-C 실행 — 상호작용 안 심었을 때 rho="
+              f"{IR['상호작용']['spearman']}, 양측p={pp} (최소가능 "
+              f"{IR['상호작용']['최소가능p']}) · 영점 판정은 ④ 로 한다")
+        pw = IR["검정력"]
+        if pw.검출률.iloc[0] > 0.15:
+            fails.append(f"7절-C 검정력 곡선의 β=0 거짓양성률이 {pw.검출률.iloc[0]}")
+        else:
+            print(f"  OK  7절-C 검정력 영점 — 거짓양성률 {pw.검출률.iloc[0]}")
+
     # 6절-D 국소 채널 시험 — EAAAK 나선을 심었으니 잡아야 한다
     HX = g.get("HX")
     if HX is None or not len(HX):
@@ -306,6 +396,29 @@ def main():
     elif HX2 is not None and len(HX2):
         print(f"  OK  조성 없는 세계 — 국소 시험도 조용하다 "
               f"(효과크기 0.3 초과 {int((HX2.효과크기 > 0.3).sum())}/{len(HX2)})")
+
+    # ── 3. 계면 상호작용을 **심은** 세계 — 되찾아야 한다 ───────────────────
+    print("\n\n")
+    g3 = run(plant_composition=True, iface_gamma=9.0,
+             label="(계면 × 열림 상호작용을 심은 가짜 데이터)")
+    IR3 = g3.get("IFACE_RESULT")
+    if IR3 is None:
+        fails.append("상호작용 세계에서 7절-C 가 안 돌았다")
+    else:
+        print("\n  심은 상호작용 회수:")
+        print(IR3["기울기표"].to_string(index=False))
+        rho, pp = IR3["상호작용"]["spearman"], IR3["상호작용"]["순열p"]
+        print(f"  기울기 vs 계면강도 rho = {rho} · 단측 p = {pp}")
+        if not (np.isfinite(rho) and rho < 0):
+            fails.append(f"심은 상호작용의 **부호가 틀렸다**: rho={rho} "
+                         f"(계면이 셀수록 기울기가 더 음수여야 한다)")
+        else:
+            print(f"  OK  7절-C 부호 — rho={rho} < 0, 사전 등록한 방향이다")
+        if np.isfinite(pp) and pp >= 0.05:
+            print(f"  ※ p={pp} 로 유의에는 못 닿았다 — 항체 5개의 최소 p 가 "
+                  f"{IR3['상호작용']['최소가능p']} 인 설계다. 부호가 맞으면 통과로 본다.")
+        else:
+            print(f"  OK  7절-C 회수 — 단측 p={pp} < 0.05")
 
     print("\n" + "=" * 78)
     if fails:
