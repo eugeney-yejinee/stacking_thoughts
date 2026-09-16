@@ -23,22 +23,42 @@ warnings.filterwarnings("ignore")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NB = os.path.join(ROOT, "notebooks", "FvFlow_v12.ipynb")
 
-# 실행할 셀 — 6절 특징표부터 9절 그림까지 (Drive·GPU 를 안 쓴다)
-ANALYSIS_CELLS = {
-    10: "3절-B 계면 강도 (캐시 재사용 경로)",
-    11: "3절-C ipTM + 사전 등록 전환 규칙",
-    20: "6절 특징표",
-    21: "6절-B 두 원장",
-    23: "6절-C 채널 판정 (2원 분산분석)",
-    24: "6절-D 국소 채널 시험 (EAAAK vs G4S)",
-    25: "6절-E 표본 독립성 (ICC)",
-    27: "7절 ML 핵심",
-    28: "7절-B 판정",
-    30: "7절-C 핵심 함수",
-    31: "7절-C 판정",
-    33: "8절 대리모형",
-    35: "9절 그림",
-}
+# 실행할 셀 — 3절-B 부터 9절 그림까지 (Drive·GPU 를 안 쓴다)
+#
+# ★ **번호가 아니라 첫 줄의 표지로 고른다.** 번호로 박아 두면 절을 하나 끼워 넣는
+#   순간 전부 한 칸씩 밀리는데, 밀린 자리도 여전히 코드 셀이라 'code 인가' 검사를
+#   통과한다 — 즉 **엉뚱한 셀을 조용히 돌린다.** 실제로 7절-D 를 넣었을 때 8절과
+#   9절 자리가 그렇게 밀렸다.
+ANALYSIS_MARKS = [
+    ("# ── 3절-B ·",  "3절-B 계면 강도 (캐시 재사용 경로)"),
+    ("# ── 3절-C ·",  "3절-C ipTM + 사전 등록 전환 규칙"),
+    ("# ── 6절 ·",    "6절 특징표"),
+    ("# ── 6절-B ·",  "6절-B 두 원장"),
+    ("# ── 6절-C ·",  "6절-C 채널 판정 (2원 분산분석)"),
+    ("# ── 6절-D ·",  "6절-D 국소 채널 시험 (EAAAK vs G4S)"),
+    ("# ── 6절-E ·",  "6절-E 표본 독립성 (ICC)"),
+    ("# ── 7절 ·",    "7절 ML 핵심"),
+    ("# ── 7절-B ·",  "7절-B 판정"),
+    ("# ── 7절-C 핵심", "7절-C 핵심 함수"),
+    ("# ── 7절-C 판정", "7절-C 판정"),
+    ("# ── 7절-D ·",  "7절-D 배향 조절 시험"),
+    ("# ── 8절 ·",    "8절 대리모형"),
+    ("# ── 9절 ·",    "9절 그림"),
+]
+
+
+def resolve_cells(srcs, kinds):
+    """표지 → 셀 번호. 못 찾거나 둘 이상이면 **그 자리에서 죽는다.**"""
+    out = []
+    for mark, name in ANALYSIS_MARKS:
+        hit = [i for i, (s_, k_) in enumerate(zip(srcs, kinds))
+               if k_ == "code" and s_.lstrip().startswith(mark)]
+        assert len(hit) == 1, (f"표지 {mark!r} 로 코드 셀을 {len(hit)}개 찾았다 "
+                               f"(1개여야 한다): {hit}")
+        out.append((hit[0], name))
+    nums = [i for i, _ in out]
+    assert nums == sorted(nums), f"표지 순서가 셀 순서와 다르다: {nums}"
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -274,8 +294,7 @@ def run(plant_composition=True, label="", iface_gamma=0.0):
     print("=" * 78)
     print(f"노트북 분석 셀 실행  {label}")
     print("=" * 78)
-    for i, name in ANALYSIS_CELLS.items():
-        assert kinds[i] == "code", f"셀 {i} 가 코드가 아니다 ({kinds[i]}) — 셀 번호를 고쳐라"
+    for i, name in resolve_cells(srcs, kinds):
         print(f"\n{'─'*78}\n▶ 셀 {i} · {name}\n{'─'*78}")
         exec(compile(strip_magic(srcs[i]), f"<cell {i}>", "exec"), g)
     return g
