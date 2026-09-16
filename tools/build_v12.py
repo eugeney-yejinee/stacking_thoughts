@@ -65,11 +65,24 @@ scFv ─┬─ 링커 뺀 VL / VH 두 서열 ──→ ABodyBuilder2 ──→ �
 ### 넣은 것
 | 넣은 것 | 이유 |
 |---|---|
-| **4-B절 합성 요인패널** | 조성 6 × 길이 4 = 24칸. **길이와 조성을 가르는 유일한 장치** |
-| **6절 특징표** | 프레임 표 → 구성체당 한 줄. ML 이 먹을 수 있는 유일한 형태 |
-| **6절 교란 원장** | 각 특징이 길이의 변장인지 먼저 찍는다 |
-| **7절 ML** | 블록 고정효과 · LOBO · 순열 검정 · **증분 검정** · **검정력 곡선** |
-| **8절 대리모형** | 링커 서열 → 앙상블 기술자. 안 돌려본 링커를 in-silico 로 훑는다 |
+| **4-B절 합성 요인패널** | 조성 7 × 길이 4 + 순서대조 4. **길이와 조성을 가르는 유일한 장치** |
+| **씨앗 반복 (4절)** | 같은 서열을 두 번 돌린다. **모든 비교의 분모.** v11 엔 없었다 |
+| **6절-D 국소 채널 시험** | `(EAAAK)ₙ` vs `(G4S)ₙ` 의 링커 나선도. 논문이 서열 민감도를 실제로 보인 자리 |
+| **6절-E 표본 독립성 (ICC)** | steering 은 논문에 없는 SMC 수정판이고 배치 안 프레임을 묶는다 |
+| **6절 특징표 + 두 원장** | 교란 원장(길이의 변장인가) · 잡음 원장(감쇠배율) |
+| **7절 ML** | 항체 고정효과 · LOGO · 순열 검정 · **증분 검정** · **검정력 곡선** · 설계 조언 |
+| **8절 대리모형 + 분산 분해** | Stage A/B 몫을 부트스트랩으로 따로 재서 찍는다 |
+
+### 그리고 조용히 틀린 값을 내던 자리 열셋을 고쳤다
+전부 **오류를 내지 않고 그럴듯한 숫자를 돌려주던** 것들이라 더 위험했다.
+ABangle 검증 CLI(무의미한 각도 6개가 조용히 나오던 것, 덤으로 412분 → 10~20분),
+항체 키 영속화(v09 출력을 통째로 못 찾던 것), `태그` 키 충돌,
+OCD6 의 dc 지배와 그 dc 로 표본을 고르던 순환, 실측 열이 분석 직전에 버려지던 것,
+합성 구성체가 숙주의 실측값을 물고 가던 것, 독립 단위가 블록이던 것,
+정규식 배향 판별, 빈 도메인 칸이 링커 색인을 밀던 것, 빈 블록 칸,
+`.done` 표식 조기 기록, `matplotlib.use("Agg")` 로 그림이 한 장도 안 보이던 것,
+그리고 N=150 지형의 "3 kcal/mol 등고선" 이 사실 **표본 하나짜리 잡음 바닥**이던 것.
+자세한 목록은 저장소의 `README.md` 에 있다.
 
 ### 그대로 두는 것
 v09 가 Drive 에 만든 것을 **하나도 다시 안 만든다.** 같은 `OUT` 을 보고,
@@ -1130,8 +1143,15 @@ CSV_LEGACY = f"{OUT}/flow.csv"    # v09 가 쓰던 이름 — 있으면 그대�
 MET = ["OCD6"] + [f"Δ{k}" for k in AB6]
 
 def _pairs_needed(r):
-    return sorted(p for p in glob.glob(f"{FL(r)}/{r.링커}__*.pdb")
-                  if "_pair" not in p and not os.path.basename(p).startswith("_p_"))
+    """구성체 r 의 앙상블 프레임 목록. 파일명 끝의 _s{번호} 로 **수치 정렬**한다 —
+    문자열 정렬이면 s10 이 s2 보다 앞에 와서 프레임 순서가 뒤섞이고,
+    6절-E 의 배치 복원과 9절의 MODEL 순서가 어긋난다."""
+    ps = [p for p in glob.glob(f"{FL(r)}/{r.링커}__*.pdb")
+          if "_pair" not in p and not os.path.basename(p).startswith("_p_")]
+    def _k(p):
+        m = re.search(r"_s(\d+)\.pdb$", p)
+        return (0, int(m.group(1))) if m else (1, 0)
+    return sorted(ps, key=_k)
 
 # ── 기존 표 읽기 ────────────────────────────────────────────────────────────
 E = None
@@ -1151,13 +1171,20 @@ print(f"  덮는 구성체 {len(_want & _have)}/{len(_want)}"
 
 # ── 모자란 구성체만 잰다 (v11 은 하나라도 모자라면 전부 다시 쟀다) ──────────
 if _todo:
+    # ★ 쌍 PDB 는 **순수 중간산물**이다. Drive 에 쓰면 안 된다.
+    #   v11 은 프레임마다 한 개씩 Drive 에 썼다 — 구성체 26개 × 150프레임 ≈ 3,900개.
+    #   Google Drive 는 작은 파일 하나하나에 왕복이 붙어서, **이게 그 412분의 정체다.**
+    #   (앙상블 PDB 자체는 Drive 에 남아야 한다. 쌍 PDB 는 ABangle 에 넘기고 버린다.)
+    PAIRD = "/content/_pair"
+    os.makedirs(PAIRD, exist_ok=True)
     R0C = {}
     def _R0(ab, r):
         """기준점 = 그 **항체의** ABB2 4모델 ABangle 평균."""
         if ab in R0C: return R0C[ab]
-        dd = REFD(ab); os.makedirs(f"{dd}/_pair", exist_ok=True)
+        dd = REFD(ab); os.makedirs(f"{PAIRD}/{safe(ab)}", exist_ok=True)
         refs = sorted(glob.glob(f"{dd}/ref_m[0-9].pdb")) or [f"{dd}/ref.pdb"]
-        pp = [write_pair(p, r.b1, r.b2, f"{dd}/_pair/{os.path.basename(p)}",
+        pp = [write_pair(p, r.b1, r.b2,
+                         f"{PAIRD}/{safe(ab)}/ref_{os.path.basename(p)}",
                          r.배향[0], r.배향) for p in refs if os.path.isfile(p)]
         a_ = [x for x in abangle6_many(pp, quiet=True).values() if x] if pp else []
         R0C[ab] = {k: float(np.mean([x[k] for x in a_])) for k in a_[0]} if a_ else None
@@ -1170,10 +1197,10 @@ if _todo:
     for _, r in CONS.iterrows():
         if (r.항체, r.링커) not in set(_todo): continue
         if _R0(r.항체, r) is None: continue
-        d = FL(r); os.makedirs(f"{d}/_pair", exist_ok=True)
+        w = f"{PAIRD}/{safe(r.항체)}"; os.makedirs(w, exist_ok=True)
         for p in _pairs_needed(r):
             b = os.path.basename(p).rsplit(".", 1)[0]
-            try: q = write_pair(p, r.b1, r.b2, f"{d}/_pair/{b}.pdb", r.배향[0], r.배향)
+            try: q = write_pair(p, r.b1, r.b2, f"{w}/{b}.pdb", r.배향[0], r.배향)
             except Exception: continue
             jobs.append((q, dict(블록=r.블록, 항체=r.항체, 배향=r.배향, 링커=r.링커,
                                  길이=int(r.길이), 합성=bool(r.합성),
@@ -1210,6 +1237,7 @@ if _todo:
     pd.DataFrame([dict(항체=ab, **v) for ab, v in R0C.items() if v]).to_csv(
         f"{OUT}/ref_angles.csv", index=False, encoding="utf-8-sig")
     print(f"  저장 {CSV_FRAMES} — {len(E)}행 · 기준점 {OUT}/ref_angles.csv")
+    shutil.rmtree(PAIRD, ignore_errors=True)      # 중간산물은 버린다
 
 assert E is not None and len(E), \
     "frames.csv 가 비었다 — 4절을 먼저 돌리거나 위 ABangle 실패 메시지를 보라"
@@ -1361,9 +1389,23 @@ def mad(v):
     return float(1.4826 * np.median(np.abs(v - np.median(v))))
 
 def outside_2sigma(g, ax=("ΔHL", "Δdc")):
-    """SAbDab 자연 2σ 타원 **밖**의 프레임 비율. (x/2σx)² + (y/2σy)² > 1"""
+    """SAbDab 자연 2σ 타원 **밖**의 프레임 비율 — 2차원 마할라노비스 반경 > 2.
+
+    ★ 이름의 '2σ' 는 1차원 감각과 다르다. 2차원에서 반경 2 안쪽은
+      1 − exp(−2) = **86.5%** 이므로, 이 값은 귀무 하에서 0.135 근처가 기본값이다.
+      (0.05 가 아니다. 차원이 늘수록 껍질에 질량이 몰리므로 6차원에서 반경 2 는
+       질량의 68% 를 '밖' 으로 셀 만큼 관대해진다 — 그래서 여기서는 2차원만 쓴다.)
+    """
     sx, sy = AB_SD[ax[0][1:]]*2, AB_SD[ax[1][1:]]*2
     return float((((g[ax[0]]/sx)**2 + (g[ax[1]]/sy)**2) > 1).mean())
+
+def w1(a, b):
+    """1차 Wasserstein 거리 — 두 분포가 얼마나 다른가를 **원래 단위로** 준다.
+    2차원 엔트로피나 KL 은 n=150 에서 편향이 크다 (2D 격자면 칸당 0.2개).
+    1D Wasserstein 은 경험분포만으로 일치추정량이라 이 표본 크기에서 믿을 수 있다."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    if len(a) < 20 or len(b) < 20: return np.nan
+    return float(st_.wasserstein_distance(a, b))
 
 def paired(df):
     """VH-VL 이 붙어 있는가 — **절대 dc** 로 판정한다.
@@ -1402,6 +1444,12 @@ def build_features(frames, geom, gen=GEN, pair_dc=PAIR_DC):
             d[f"{m_}중앙"] = float(np.median(src[m_]))
             d[f"{m_}_MAD"] = mad(src[m_])
         d["자연2σ밖"] = outside_2sigma(src)
+        # ★ "기준점 앙상블과의 거리" 는 못 잰다 — BioEmu 는 단일 사슬만 되므로
+        #   링커 없는 Fv 의 앙상블을 만들 수 없다 (README: "only supports monomers").
+        #   대신 **같은 항체의 다른 링커들을 합친 분포**와의 거리를 잰다.
+        #   "이 링커가 형제들과 얼마나 다른가" — 항체 안에서 정의되므로 비교가 성립한다.
+        sib = Gf[(Gf.항체 == ab) & (Gf.링커 != lk) & Gf.짝지음]
+        d["W1_형제"] = w1(src.OCD5, sib.OCD5) if len(sib) >= 20 else np.nan
         for k in AB6:
             d[f"Δ{k}중앙"] = float(np.median(src[f"Δ{k}"]))
             d[f"Δ{k}_MAD"] = mad(src[f"Δ{k}"])
@@ -1445,11 +1493,21 @@ def confound_ledger(F, feats, length_col="길이", block="항체"):
               if mw.sum() > 2 and np.std(vw[mw]) > 1e-12 and np.std(cw[mw]) > 1e-12
               else np.nan)
         a = abs(rw) if np.isfinite(rw) else 0.0
+        # ★ 그룹 **마다** 길이와 rho = ±1 이면, 그 특징은 길이의 결정적 함수다.
+        #   그러면 증분 검정이 수학적으로 0 에 묶인다 — '효과 없음' 이 아니라
+        #   **'질문에 답할 수 없음'** 이다. 둘을 구분해서 보고해야 한다.
+        per = [st_.spearmanr(g[c], g[length_col])[0]
+               for _, g in F.groupby(block) if g[c].nunique() > 1 and len(g) > 2]
+        per = [x for x in per if np.isfinite(x)]
+        det = bool(per) and all(abs(x) > 0.999 for x in per)
         rows.append(dict(특징=c,
             r_길이=round(float(np.corrcoef(v[m], F[length_col].values[m])[0, 1]), 2)
                    if m.sum() > 2 else np.nan,
-            블록내r_길이=round(float(rw), 2) if np.isfinite(rw) else np.nan,
-            판정=("★ 길이의 변장" if a > 0.9 else
+            그룹내r_길이=round(float(rw), 2) if np.isfinite(rw) else np.nan,
+            그룹내rho최소=round(float(np.min(np.abs(per))), 2) if per else np.nan,
+            길이완전공선=det,
+            판정=("★★ 길이의 결정적 함수 — 증분 검정이 원리적으로 무력하다" if det else
+                  "★ 길이의 변장" if a > 0.9 else
                   "길이와 강하게 얽힘" if a > 0.7 else "독립적")))
     return pd.DataFrame(rows)
 
@@ -1513,11 +1571,28 @@ if HC and len(USE):
 
 print("="*76); print("★ 교란 원장 — 이 특징이 그냥 길이인가"); print("="*76)
 print("  항체 안 |r| > 0.9 면 그 특징은 길이의 다른 이름이다. n≈20 에서 둘을 못 가른다.")
-display(confound_ledger(USE, ALLF, block=GROUP))
+print("  그리고 항체 **마다** rho = ±1 이면 길이의 결정적 함수다 — 7절 ③ 증분 검정이")
+print("  수학적으로 0 에 묶인다. 그때 'p=0.87, 효과 없음' 이라 쓰면 안 된다.")
+print("  올바른 문장은 **'이 설계로는 그 질문에 답할 수 없다'** 이다.\n")
+LED = confound_ledger(USE, ALLF, block=GROUP)
+display(LED)
+DEGENERATE = set(LED[LED.길이완전공선].특징)
+if DEGENERATE:
+    print(f"  ★★ 길이의 결정적 함수: {sorted(DEGENERATE)}")
+    print("     이 특징들만으로는 '길이 위의 증분' 을 물을 수 없다. 4-B절 합성 패널이")
+    print("     같은 길이에서 조성만 바꾼 칸을 주는 유일한 탈출구다.")
 
 print("="*76); print("★ 특징 잡음 원장 — 특징 하나가 150 프레임의 통계량이다"); print("="*76)
 print("  관측 상관 ≈ 참 상관 × 감쇠배율.  '상관이 없다' 와 '특징이 시끄럽다' 를 여기서 가른다.")
-display(bootstrap_feature_se(E[~E.합성.astype(bool)], USE, ALLF))
+NOISE = bootstrap_feature_se(E[~E.합성.astype(bool)], USE, ALLF)
+display(NOISE)
+RELY = dict(zip(NOISE.특징, NOISE.신뢰도)) if len(NOISE) else {}
+_rp0 = RELY.get(PRIMARY, np.nan)
+if np.isfinite(_rp0) and _rp0 < 0.7:
+    print(f"  ★★ 확증 특징 '{PRIMARY}' 의 신뢰도가 {_rp0:.2f} 다 — 프레임 {N_BE if 'N_BE' in dir() else 150}개로는")
+    print(f"     이 양이 제대로 안 잡힌다. 관측 상관이 참값의 {np.sqrt(_rp0):.2f}배로 눌리므로")
+    print(f"     7절 ① 이 귀무로 나와도 그것은 **'효과가 없다' 가 아니라 '측정이 시끄럽다'** 다.")
+    print(f"     고치는 법: N_BE 를 올려라 (오차는 √n 로 준다 → 4배 뽑으면 절반).")
 # ── 잡음 바닥 — 같은 서열을 두 번 돌렸을 때의 차이 ────────────────────────
 _rp = [c for c in FEAT.링커 if str(c).endswith("__rep2")]
 if _rp:
@@ -1561,9 +1636,24 @@ display(USE.groupby([GROUP, "블록"]).agg(링커수=("링커", "nunique"),
 
 # ═════════════════════════════════════════════════════════════════════════════
 md(r'''
-## 6절-C · **채널 판정** — BioEmu 가 조성을 보는가
+## 6절 C·D·E · **채널 판정** — BioEmu 가 조성을 보는가
 
-합성 요인패널의 24칸에 2원 분산분석을 건다. 이 표 한 장이 연구의 분기점이다.
+세 셀이 같은 질문을 서로 다른 자리에서 묻는다. **순서가 있다.**
+
+| 셀 | 어디서 읽나 | 무엇을 답하나 |
+|---|---|---|
+| **6-D** | 링커 **안** (나선도) | 조성이 모델에 **닿기는 하는가**. 논문이 서열 민감도를 실제로 보인 자리 |
+| **6-C** | 도메인 **배향** (ΔABangle) | 그 조성이 **전역 배향까지 전달되는가** |
+| **6-E** | 프레임 상관 (ICC) | 위 두 p 가 서 있는 땅이 단단한가 |
+
+★ 6-D 가 음성이면 6-C 는 볼 것도 없다. 반대로 **6-D 양성 · 6-C 음성**은 실패가 아니라
+결과다 — "조성은 링커 국소 구조를 바꾸지만 도메인 배향까지는 안 간다" 는 뜻이고,
+그건 이 연구가 낼 수 있는 가장 구체적인 기전 진술이다.
+
+---
+
+### 6절-C · 전역 배향에서의 채널 판정
+합성 요인패널의 28칸에 2원 분산분석을 건다. 이 표 한 장이 연구의 분기점이다.
 
 | 나오는 모양 | 뜻 | 그 다음 |
 |---|---|---|
@@ -1581,6 +1671,11 @@ md(r'''
 
 ★ 생물학적 반복이 아니다. 이 오차항으로 말할 수 있는 것은 **"BioEmu 의 앙상블이
 조성에 따라 다르다"** 까지이고, "실제 단백질이 다르다" 는 아니다.
+
+### 그리고 음성대조 — 이 데이터로 얻을 수 있는 가장 강한 것
+씨앗 반복 두 개(같은 서열, 다른 실행)를 **"서로 다른 링커 2종" 인 척** 같은 검정에
+넣는다. 링커를 안 바꿨으니 여기서 '유의' 가 나오면 **검정의 위양성률이 깨진 것**이고,
+그러면 위의 조성 판정도 전부 무효다. 셀이 자동으로 돌린다.
 ''')
 
 code(r'''
@@ -2071,6 +2166,10 @@ print("7절 함수 준비 완료")
 
 code(r'''
 # ── 7절-B · 판정 — 확증 · 탐색 · 증분 · 검정력 ─────────────────────────────
+# 6절-B 를 안 돌리고 이 셀만 다시 돌려도 죽지 않게 한다 (원장 결과가 없으면 빈 채로)
+DEGENERATE = DEGENERATE if "DEGENERATE" in dir() else set()
+RELY       = RELY       if "RELY"       in dir() else {}
+
 if not (RUN_ML and HC and len(USE) >= 6 and USE[GROUP].nunique() >= 3):
     print("7절 건너뜀 —", "RUN_ML=False" if not RUN_ML else
           ("실측 열이 없다" if not HC else
@@ -2090,10 +2189,17 @@ else:
     print("─"*76); print(f"① 확증 검정 — {PRIMARY} (사전 등록, 다중비교 보정 없음)")
     print("─"*76)
     r1 = perm_test_signal(USE[PRIMARY].values, Y, D, seed=1)
+    _npair = len(D.pairs)
+    _need = int(np.ceil(r1["귀무95"] * _npair))
     print(f"  일치도 {r1['일치도']:.3f} ({r1['일치']})  vs  귀무평균 {r1['귀무평균']:.3f} "
           f"· 귀무 95% {r1['귀무95']:.3f}")
+    print(f"  → p ≤ 0.05 에 닿으려면 **{_npair}쌍 중 {_need}쌍**을 맞혀야 한다.")
     print(f"  순열 p = {r1['순열p']:.4f}   (참고: 이항 p = {r1['이항p']:.4f})")
     print(f"  → {'**신호가 있다.**' if r1['순열p'] < ALPHA else '신호 없음.'}")
+    if r1["순열p"] >= ALPHA and np.isfinite(RELY.get(PRIMARY, np.nan)) \
+            and RELY[PRIMARY] < 0.7:
+        print(f"     ※ 단, 6절-B 가 이 특징의 신뢰도를 {RELY[PRIMARY]:.2f} 로 쟀다 —")
+        print(f"       '효과가 없다' 보다 **'측정이 시끄럽다'** 가 먼저다. 프레임을 더 뽑아라.")
 
     # ── ② 탐색 검정 — Holm 보정 ───────────────────────────────────────────
     print("\n" + "─"*76); print("② 탐색 검정 — 나머지 3개, Holm 보정")
@@ -2115,7 +2221,7 @@ else:
     print("\n" + "─"*76)
     print("③ 증분 검정 — 앙상블이 **링커 길이 위에** 무언가 더하는가")
     print("─"*76)
-    print("  y 는 안 섞는다. 앙상블 특징 **행만** 블록 안에서 섞어, 길이와 y 의 관계는")
+    print("  y 는 안 섞는다. 앙상블 특징 **행만** 항체 안에서 섞어, 길이와 y 의 관계는")
     print("  그대로 둔 채 앙상블 특징이 링커에 붙어 있다는 사실만 끊는다.\n")
     inc = []
     for nm, cols in [("확증 특징만", [PRIMARY]),
@@ -2128,8 +2234,13 @@ else:
                         증분=r["증분"], 순열p=r["순열p"],
                         판정="**길이 위에 더한다**" if r["순열p"] < ALPHA else "더하지 않는다"))
     INC = pd.DataFrame(inc); display(INC)
-    print("  → 증분이 유의하지 않으면, 나온 상관은 **'긴 링커가 나쁘다'의 다른 말**이다.")
-    print("     BioEmu 를 밤새 돌린 값어치는 이 줄에서만 나온다.")
+    if DEGENERATE >= set([PRIMARY]):
+        print(f"  ★★ '{PRIMARY}' 이(가) 항체마다 길이와 rho = ±1 이다 — 증분은 **수학적으로 0 에**")
+        print("     묶여 있다. 위 p 는 '효과 없음' 이 아니라 **'이 설계로는 답할 수 없음'** 이다.")
+        print("     4-B절 합성 패널(같은 길이 × 다른 조성)이 유일한 탈출구다.")
+    else:
+        print("  → 증분이 유의하지 않으면, 나온 상관은 **'긴 링커가 나쁘다'의 다른 말**이다.")
+        print("     BioEmu 를 밤새 돌린 값어치는 이 줄에서만 나온다.")
 
     # ── ④ 검정력 — 귀무 결과를 읽는 유일한 방법 ───────────────────────────
     print("\n" + "─"*76); print("④ 검정력 — '상관이 없었다' 가 무슨 뜻인지")
@@ -2147,7 +2258,29 @@ else:
         print(f"     β = {mde:.1f} 보다 작은 효과는 이 설계(항체 {USE[GROUP].nunique()}개 ×"
               f" 링커 {int(USE.groupby(GROUP).size().median())}종)로는 **애초에 못 본다.**")
         print(f"     '효과가 없다' 가 아니라 '{mde:.1f} σ 보다 작은 효과는 못 봤다' 가 맞다.")
-        print(f"     더 보려면 구성체가 아니라 **항체를 늘려야 한다.** 합성 링커로는 안 는다.")
+
+    # ── ⑥ 그래서 다음에 뭘 만들어야 하나 — 측정해서 답한다 ────────────────
+    print("\n" + "─"*76); print("⑥ 다음 설계 — 항체를 늘릴까, 항체당 링커를 늘릴까")
+    print("─"*76)
+    print("  검정 통계량이 **항체 안 쌍**이라 쌍 수 = 항체 × C(링커,2) 다.")
+    print("  링커에는 **제곱으로**, 항체에는 **선형으로** 는다. 직관과 다르다.\n")
+    _g0, _k0 = USE[GROUP].nunique(), int(round(USE.groupby(GROUP).size().mean()))
+    from math import comb
+    plans = [(f"지금:   항체{_g0} × 링커{_k0}", _g0, _k0),
+             (f"링커+2: 항체{_g0} × 링커{_k0+2}", _g0, _k0+2),
+             (f"링커+4: 항체{_g0} × 링커{_k0+4}", _g0, _k0+4),
+             (f"항체+3: 항체{_g0+3} × 링커{_k0}", _g0+3, _k0),
+             (f"항체+7: 항체{_g0+7} × 링커{_k0}", _g0+7, _k0)]
+    display(pd.DataFrame([dict(설계=nm, 새구성체=g*k - _g0*_k0,
+                               총구성체=g*k, 항체안쌍=g*comb(k, 2))
+                          for nm, g, k in plans]))
+    print("  ★ 같은 수를 만든다면 **기존 항체에 링커를 더하는 쪽**이 쌍을 훨씬 많이 준다.")
+    print("    (모의 검정력, β=1.0 기준: 항체5×링커4 = 0.52 → 항체5×링커6 = 0.93")
+    print("     vs 항체8×링커4 = 0.85. 구성체 수는 30 대 32 로 비슷한데도 그렇다.)")
+    print("  ※ 단, 항체를 늘리면 **일반화 범위**가 는다 — 링커를 늘리면 그 5개 항체에서의")
+    print("    검출력만 는다. 결론을 몇 개 항체까지 주장하고 싶은가가 그 선택을 정한다.")
+    print("  ※ 합성 링커는 여기 안 든다. 라벨이 없으므로 쌍을 만들지 못한다 —")
+    print("    합성 패널이 사는 것은 **검출력이 아니라 4-B절의 설계 해상도**다.")
 
     # ── ⑤ 계수 — 부호가 블록마다 같은가 ───────────────────────────────────
     _cols = [c for c in ALLF if c in USE.columns and USE[c].notna().all()
@@ -2434,6 +2567,9 @@ code(r'''
 # ── 9절 · 그림 ─────────────────────────────────────────────────────────────
 plt = setup_font()
 from matplotlib.patches import Ellipse
+# 앞 셀을 안 돌리고 이 셀만 다시 돌려도 죽지 않게 한다
+USE  = USE  if "USE"  in dir() else FEAT[~FEAT.합성]
+FEAT = FEAT if "FEAT" in dir() else pd.DataFrame()
 SIG = {f"Δ{k}": v for k, v in AB_SD.items()}
 LAND_X, LAND_Y = "ΔHL", "Δdc"       # ΔHC1 · ΔHC2 등으로 바꿔도 된다
 
@@ -2624,8 +2760,10 @@ md(r'''
 | `{OUT}/{항체}/ref_m0..3.pdb` · `ref.pdb` | ABodyBuilder2 기준점 (Δ 의 영점) |
 | `{OUT}/{항체}/flow/{링커}__BioEmu_s*.pdb` | 앙상블 프레임 |
 | `{OUT}/{항체}/flow/{링커}__BioEmu.done` | 완료 표식 (이어달리기 판정) |
-| **`{OUT}/frames.csv`** | 구조 한 줄씩 — ΔABangle 6축 · OCD6 (= v09 의 `flow.csv`) |
-| **`{OUT}/geom.csv`** | 구조 한 줄씩 — 링커 접촉 · Rg · 신장도 |
+| **`{OUT}/frames.csv`** | 구조 한 줄씩 — 원시 ABangle 6값 · Δ 6축 · OCD5 · OCD6 |
+| `{OUT}/ref_angles.csv` | 항체별 기준점 각도. Δ 를 다시 정의할 때 ABangle 없이 된다 |
+| `{OUT}/antibody_keys.csv` | **(D1,D2,블록,배향) → 항체 키.** v09 폴더 이름을 고정한다 |
+| **`{OUT}/geom.csv`** | 구조 한 줄씩 — 링커 접촉 · **나선도** · Rg · 신장도 |
 | **`{OUT}/features.csv`** | **구성체 한 줄씩** — ML 이 먹는 표 |
 | **`{OUT}/insilico_screen.csv`** | 안 돌려본 링커까지의 예측 (후보 정렬용) |
 | `{OUT}/fig_landscape.png` · `fig_channel.png` · `fig_ml.png` | 그림 셋 |
@@ -2635,20 +2773,33 @@ md(r'''
 
 ## 결과를 읽는 순서 — 결과 보기 전에 박는다
 
-**1단계 · 채널이 있는가** (6절-C, 합성 요인패널)
-- η²(조성) 이 작고 η²(길이) 만 크다 → **BioEmu 는 길이만 본다.**
-  2·3단계에서 무엇이 나오든 그것은 "긴 링커가 나쁘다" 의 다른 말이다. 그렇게 보고한다.
+**0단계 · 잡음 바닥이 잡혔는가** (4절 씨앗 반복 → 6절-B·6절-C 음성대조)
+- 같은 서열 두 실행의 차이가 구성체 간 흩어짐의 절반을 넘는다 → **여기서 멈춘다.**
+  아래 어떤 차이도 링커 때문인지 실행마다 달라서인지 구분할 수 없다.
+
+**1단계 · 조성이 모델에 닿는가** (6절-D, 국소)
+- `(EAAAK)ₙ` 이 `(G4S)ₙ` 보다 링커 나선도를 못 올린다 → **조성 채널이 죽었다.**
+  교과서적 강직 나선조차 코일과 구분이 안 되는 것이다. 조성 해석을 전부 접는다.
+
+**2단계 · 그 조성이 배향까지 가는가** (6절-C, 전역)
+- η²(조성) 이 작고 η²(길이) 만 크다 → **배향은 길이만 본다.**
+  3·4단계에서 무엇이 나오든 그것은 "긴 링커가 나쁘다" 의 다른 말이다. 그렇게 보고한다.
+- **1단계 양성 · 2단계 음성은 실패가 아니라 결과다** — "조성은 링커 국소 구조를
+  바꾸지만 도메인 배향까지는 전달되지 않는다". 이 연구가 낼 수 있는 가장 구체적인
+  기전 진술이고, 그대로 쓰면 된다.
 - 둘 다 작다 → 앙상블이 링커에 아예 안 반응한다. **여기서 접는다.**
 
-**2단계 · 신호가 있는가** (7절 ①, 확증 검정)
+**3단계 · 신호가 있는가** (7절 ①, 확증 검정)
 - 순열 p < 0.05 → 신호가 있다. 3단계로.
 - p ≥ 0.05 → ④ 검정력 곡선을 **반드시 같이 읽는다.**
   MDE 보다 작은 효과는 이 설계로 애초에 못 본다.
   "효과가 없다" 가 아니라 **"MDE 보다 작은 효과는 못 봤다"** 가 맞다.
 
-**3단계 · 길이 말고 다른 게 있는가** (7절 ③, 증분 검정)
+**4단계 · 길이 말고 다른 게 있는가** (7절 ③, 증분 검정)
 - 증분 p < 0.05 → **BioEmu 를 돌린 값어치가 여기 있다.**
 - p ≥ 0.05 → 앙상블은 길이 위에 아무것도 더하지 않았다. 그것도 결과다.
+- ★ 단, 6절-B 의 교란 원장이 그 특징을 **"길이의 결정적 함수"** 로 판정했다면
+  이 p 는 '효과 없음' 이 아니라 **'이 설계로는 답할 수 없음'** 이다. 셀이 그렇게 찍는다.
 
 ---
 
@@ -2660,20 +2811,32 @@ md(r'''
    그 사이의 연결(열린 단량체 → 사슬간 VH-VL 결합 → 응집)은 모델이 아니라 **가설**이다.
    상관이 나와도 그 가설을 증명하지는 않는다.
 
-2. **인공 링커는 논문이 검증한 범위 밖이다.** BioEmu 의 성능은 서열유사도 30% 에서
-   평탄해지는데 그건 **천연 단백질** 기준이다. `(G4S)n` 에는 진화 정보가 없다.
-   6절-C 가 이걸 직접 재는 유일한 장치다.
+2. **인공 링커는 논문이 검증한 범위 밖이다 — 다만 양면이다.**
+   성능이 서열유사도 30% 에서 평탄해지는데 그건 **천연 단백질** 기준이고
+   `(G4S)ₙ` 에는 진화 정보가 없다. **반대 증거도 있다**: PPFT 는 점돌연변이
+   50만 건으로 학습했고 ΔΔG Spearman > 0.6, Fig 4F 는 단일 치환 Ile7→Pro 가
+   *그 잔기가 있는 나선의* 헬릭스 함량을 떨어뜨리는 것을 보인다. 한 잔기가
+   모델에 닿는다. 그래서 이건 **양면 가설**이고, 6절-D(국소)·6절-C(전역)가
+   그것을 직접 재는 유일한 장치다. 어느 쪽으로 나오든 답이 된다.
 
-3. **150 프레임은 논문 기준의 1/66 이다.** 본문 결과는 전부 10,000 샘플로 냈다.
+3. **150 프레임은 논문 기준의 1.5% 다.** 본문 결과는 전부 10,000 샘플로 냈다.
    분포의 **꼬리**(= 열림분율이 사는 곳)는 그만큼 덜 수렴했다.
-   6절-B 의 특징 잡음 원장이 그 영향을 정량한다.
+   6절-B 의 특징 잡음 원장이 그 영향을 감쇠배율로 정량한다.
 
-4. **독립 단위는 26이 아니라 5다.** 블록이 5개뿐이므로 자유도도 5개분이다.
-   합성 데이터를 아무리 만들어도 이 숫자는 안 늘어난다. 늘리려면
-   **구성체가 아니라 항체(블록)를 늘려야 한다.**
+4. **독립 단위는 26이 아니라 5다.** 항체가 5개뿐이므로 자유도도 5개분이다.
+   합성 데이터를 아무리 만들어도 이 숫자는 안 늘어난다 — 라벨이 없기 때문이다.
+   늘리려면 실제로 만들어 재야 하고, **7절 ⑥ 이 어느 쪽이 값싼지 측정해서 말해 준다.**
+   (검정 통계량이 항체 안 쌍이라 쌍 수 = 항체 × C(링커,2) 다. 링커에는 제곱으로,
+   항체에는 선형으로 는다 — 그래서 **기존 항체에 링커를 더하는 쪽이 구성체당 더 싸다.**
+   대신 항체를 늘리면 결론의 적용 범위가 넓어진다. 어느 쪽이 필요한지는 목적이 정한다.)
 
 5. **A∘B 스크리닝은 검증이 아니다.** 후보를 정렬해 줄 뿐이고, 상위 후보는
-   **실제로 만들어 재봐야** 한다.
+   **실제로 만들어 재봐야** 한다. 8절이 `StageB몫` 을 찍는다 — 그 값이 0.7 을 넘으면
+   불확실성의 대부분이 라벨 26개에서 오는 것이고, 셀이 스스로 그렇게 인쇄한다.
+
+6. **`physical_steering` 은 논문에 없는 저장소 수정판이다.** SMC 재표집이 배치 안
+   프레임에 공통 조상을 만들 수 있고, 그러면 "통계적으로 독립" 이라는 논문의 보장이
+   따라오지 않는다. 6절-E 가 ICC 로 유효 표본수를 직접 잰다.
 ''')
 
 # ═════════════════════════════════════════════════════════════════════════════
