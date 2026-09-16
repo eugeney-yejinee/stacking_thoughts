@@ -204,6 +204,11 @@ RUN_BIOEMU = True     # 실측 패널. v09 가 끝냈으면 전부 건너뛴다
 RUN_PANEL  = True     # ★ 합성 요인패널 (조성 6 × 길이 4). 채널 판정의 유일한 장치
 RUN_ML     = True     # 6~8절 분석. GPU 불필요 — 따로 다시 돌려도 된다
 
+# ★ 이미 만들어 둔 표(interface.csv · frames.csv · geom.csv)를 읽어 쓸까.
+#   3절-B 가 제일 먼저 참조하므로 **여기** 1절에 둔다 — 5절에 두면 위에서부터
+#   차례로 돌릴 때 3절-B 가 NameError 로 죽는다.
+REUSE_CSV  = True     # False 로 두면 표를 무시하고 전부 다시 잰다
+
 # ── 사전 등록 임계 — 결과 보기 전에 박는다 ─────────────────────────────────
 # 짝지음 판정 — **절대 dc** 로 한다. Δdc(기준점 대비)로 하면 기준점이 특이한 항체에서
 # '붙었다' 의 뜻이 구성체마다 달라진다.
@@ -511,6 +516,20 @@ def kabsch(P, Q):
     U, S, Vt = np.linalg.svd((P - P.mean(0)).T @ (Q - Q.mean(0)))
     return U @ np.diag([1, 1, np.sign(np.linalg.det(U @ Vt))]) @ Vt
 
+def first_model(path):
+    """구조 파일의 첫 MODEL. **못 읽으면 None** 을 준다.
+
+    ★ 빈 파일이나 잘린 파일이 들어오면 Biopython 은 모델을 하나도 안 내놓고
+      next() 가 **메시지 없는 StopIteration** 을 던진다. 루프 한가운데서 노트북이
+      이유 없이 죽은 것처럼 보이는 사고가 여기서 난다 — ABB2 나 BioEmu 가 한 건
+      실패해 0바이트 PDB 를 남기면 실제로 그렇게 된다. 한 구조가 못 읽혔다는 것과
+      노트북이 못 돈다는 것은 다른 일이므로, 여기서 갈라 준다.
+    """
+    try:
+        return next(_parser(path).get_structure("x", path).get_models())
+    except Exception:
+        return None
+
 def write_pair(path, b1, b2, out, d1ch=None, od="HL"):
     """구조를 **H/L 두 사슬 PDB** 로 다시 쓴다 (링커 구간은 버린다).
     ABangle 이 이 형식을 요구한다. 단일사슬(BioEmu)이면 b1/b2 로 자른다.
@@ -519,8 +538,12 @@ def write_pair(path, b1, b2, out, d1ch=None, od="HL"):
       둘 다 사슬 안에서 1 부터 다시 번호를 매기므로 번호 규약이 같다.
       한쪽만 다른 경로로 쓰면 Δ 에 구성체마다 다른 상수 치우침이 생긴다.
     """
-    st = next(_parser(path).get_structure("x", path).get_models())
+    st = first_model(path)
+    if st is None:
+        raise ValueError(f"구조를 못 읽었다 (비었거나 잘렸다): {path}")
     ch = list(st)
+    if not ch:
+        raise ValueError(f"사슬이 하나도 없다: {path}")
     if len(ch) >= 2:
         ch = sorted(ch, key=lambda c: -len(list(c)))[:2]
         if d1ch and any(c.id == d1ch for c in ch):
@@ -856,7 +879,9 @@ IFACE_CUT = 5.0        # 계면 접촉 판정 (무거운 원자 간 Å)
 
 def _chains_HL(path):
     """ABB2 기준 구조 → (H 잔기 목록, L 잔기 목록). 사슬 이름이 H/L 이다."""
-    st = next(_parser(path).get_structure("x", path).get_models())
+    st = first_model(path)
+    if st is None:
+        return None, None
     ch = {c.id: [r for r in c if "CA" in r] for c in st}
     if "H" in ch and "L" in ch and ch["H"] and ch["L"]:
         return ch["H"], ch["L"]
@@ -1563,7 +1588,7 @@ v11 은 하나라도 모자라면 5,854구조를 통째로 다시 쟀다(412분)
 
 code(r'''
 # ── 5절 · ABangle 수집 → frames.csv ────────────────────────────────────────
-REUSE_CSV = True                  # False 로 두면 전부 다시 잰다
+# REUSE_CSV 는 1절 스위치 칸에 있다 (3절-B 가 먼저 쓴다).
 CSV_FRAMES = f"{OUT}/frames.csv"
 CSV_LEGACY = f"{OUT}/flow.csv"    # v09 가 쓰던 이름 — 있으면 그대로 읽는다
 MET = ["OCD6"] + [f"Δ{k}" for k in AB6]
@@ -1609,9 +1634,17 @@ if _todo:
         if ab in R0C: return R0C[ab]
         dd = REFD(ab); os.makedirs(f"{PAIRD}/{safe(ab)}", exist_ok=True)
         refs = sorted(glob.glob(f"{dd}/ref_m[0-9].pdb")) or [f"{dd}/ref.pdb"]
-        pp = [write_pair(p, r.b1, r.b2,
-                         f"{PAIRD}/{safe(ab)}/ref_{os.path.basename(p)}",
-                         r.배향[0], r.배향) for p in refs if os.path.isfile(p)]
+        pp = []
+        for p in refs:
+            if not os.path.isfile(p): continue
+            # 한 모델이 못 읽혀도 나머지 3개로 기준점을 잡는다 — 여기서 예외를
+            # 안 막으면 기준 구조 한 건 때문에 5절이 통째로 멈춘다.
+            try:
+                pp.append(write_pair(p, r.b1, r.b2,
+                                     f"{PAIRD}/{safe(ab)}/ref_{os.path.basename(p)}",
+                                     r.배향[0], r.배향))
+            except Exception as e:
+                print(f"  ★ 기준 구조 건너뜀 {os.path.basename(p)}: {e}")
         a_ = [x for x in abangle6_many(pp, quiet=True).values() if x] if pp else []
         R0C[ab] = {k: float(np.mean([x[k] for x in a_])) for k in a_[0]} if a_ else None
         if R0C[ab] is None: print(f"  ★ 기준점 ABangle 실패: {ab}")
@@ -1889,6 +1922,11 @@ def build_features(frames, geom, gen=GEN, pair_dc=PAIR_DC):
     return F.sort_values([c for c in ("합성", "블록", "항체", "길이")
                           if c in F.columns]).reset_index(drop=True)
 
+# ★ 5절이 안 끝났으면 **여기서 이유를 말하고 멈춘다.** 그냥 두면
+#   build_features 안에서 'NoneType 에 생성기 속성이 없다' 같은 말이 나오는데,
+#   그건 원인(5절이 비었다)과 아무 상관 없어 보이는 문장이라 노트북이 고장난 것처럼 읽힌다.
+assert E is not None and len(E), (
+    "frames.csv 가 비었다 — 6~9절은 전부 이 표 위에 선다. 5절을 먼저 끝내라.")
 FEAT = build_features(E, G)
 FEAT.to_csv(f"{OUT}/features.csv", index=False, encoding="utf-8-sig")
 ALLF = [PRIMARY] + EXPLORATORY
@@ -2346,9 +2384,10 @@ def icc_by_batch(v, batch, m):
     neff = len(v) / (1 + (m - 1)*icc) if np.isfinite(icc) else np.nan
     return icc, neff
 
-_Ei = E[(E.생성기 == GEN)].copy()
-_Ei["프레임"] = _Ei.태그.str.extract(r"_s(\d+)$")[0].astype(float)
-_Ei = _Ei[_Ei.프레임.notna()]
+_Ei = E[E.생성기 == GEN].copy() if (E is not None and len(E)) else pd.DataFrame()
+if len(_Ei):
+    _Ei["프레임"] = _Ei.태그.str.extract(r"_s(\d+)$")[0].astype(float)
+    _Ei = _Ei[_Ei.프레임.notna()]
 if len(_Ei) and BATCH > 1:
     _Ei["배치"] = (_Ei.프레임 // BATCH).astype(int)
     rows = []
@@ -2614,15 +2653,31 @@ else:
     # ── ① 확증 검정 — 사전 등록 특징 하나. 보정 없음 ──────────────────────
     print("─"*76); print(f"① 확증 검정 — {PRIMARY} (사전 등록, 다중비교 보정 없음)")
     print("─"*76)
-    r1 = perm_test_signal(USE[PRIMARY].values, Y, D, seed=1)
+    # ★ 확증 특징이 **상수**면 검정 자체가 정의되지 않는다. 그런데 이건 사고가 아니라
+    #   결과다 — 짝지음 게이트가 한 번도 안 걸렸다는 뜻이고(모든 프레임이 붙어 있다),
+    #   그러면 '열림' 이라는 축 위에 구성체를 가를 것이 없다. 그냥 두면 이 사실이
+    #   'NaN 을 int 로 못 바꾼다' 라는 무관한 문장으로 보고되고 7절 전체가 멈춘다.
+    _pv = pd.to_numeric(USE[PRIMARY], errors="coerce").values
+    PRIM_OK = bool(np.isfinite(_pv).sum() >= len(USE) - 1
+                   and np.nanstd(_pv) > 1e-12)
     _npair = len(D.pairs)
-    _need = int(np.ceil(r1["귀무95"] * _npair))
-    print(f"  일치도 {r1['일치도']:.3f} ({r1['일치']})  vs  귀무평균 {r1['귀무평균']:.3f} "
-          f"· 귀무 95% {r1['귀무95']:.3f}")
-    print(f"  → p ≤ 0.05 에 닿으려면 **{_npair}쌍 중 {_need}쌍**을 맞혀야 한다.")
-    print(f"  순열 p = {r1['순열p']:.4f}   (참고: 이항 p = {r1['이항p']:.4f})")
-    print(f"  → {'**신호가 있다.**' if r1['순열p'] < ALPHA else '신호 없음.'}")
-    if r1["순열p"] >= ALPHA and np.isfinite(RELY.get(PRIMARY, np.nan)) \
+    if not PRIM_OK:
+        r1 = None
+        _v = _pv[np.isfinite(_pv)]
+        print(f"  ★ {PRIMARY} 가 구성체 전체에서 **상수다** "
+              f"(값 {(_v[0] if len(_v) else float('nan')):.3g}, 유효 {len(_v)}/{len(USE)}).")
+        print(f"     짝지음 게이트(|dc−{DC0}| < {PAIR_NSD}σ)가 한 번도 안 걸렸다 —")
+        print(f"     즉 **모든 프레임이 붙어 있다.** '효과가 없다' 가 아니라")
+        print(f"     '이 축에는 잴 변동 자체가 없다' 이다. ② 탐색 특징으로 간다.")
+    else:
+        r1 = perm_test_signal(USE[PRIMARY].values, Y, D, seed=1)
+        _need = int(np.ceil(r1["귀무95"] * _npair))
+        print(f"  일치도 {r1['일치도']:.3f} ({r1['일치']})  vs  귀무평균 {r1['귀무평균']:.3f} "
+              f"· 귀무 95% {r1['귀무95']:.3f}")
+        print(f"  → p ≤ 0.05 에 닿으려면 **{_npair}쌍 중 {_need}쌍**을 맞혀야 한다.")
+        print(f"  순열 p = {r1['순열p']:.4f}   (참고: 이항 p = {r1['이항p']:.4f})")
+        print(f"  → {'**신호가 있다.**' if r1['순열p'] < ALPHA else '신호 없음.'}")
+    if r1 is not None and r1["순열p"] >= ALPHA and np.isfinite(RELY.get(PRIMARY, np.nan)) \
             and RELY[PRIMARY] < 0.7:
         print(f"     ※ 단, 6절-B 가 이 특징의 신뢰도를 {RELY[PRIMARY]:.2f} 로 쟀다 —")
         print(f"       '효과가 없다' 보다 **'측정이 시끄럽다'** 가 먼저다. 프레임을 더 뽑아라.")
@@ -2650,7 +2705,7 @@ else:
     print("  y 는 안 섞는다. 앙상블 특징 **행만** 항체 안에서 섞어, 길이와 y 의 관계는")
     print("  그대로 둔 채 앙상블 특징이 링커에 붙어 있다는 사실만 끊는다.\n")
     inc = []
-    for nm, cols in [("확증 특징만", [PRIMARY]),
+    for nm, cols in [("확증 특징만", [PRIMARY] if PRIM_OK else []),
                      ("사전 등록 4개", [c for c in ALLF if c in USE.columns and
                                        USE[c].notna().all() and USE[c].std(ddof=1) > 1e-12])]:
         if not cols: continue
@@ -2673,13 +2728,25 @@ else:
     print("─"*76)
     print("  실제 특징값은 그대로 두고 **라벨만** 알려진 효과크기로 심어 진짜 분석을")
     print("  통째로 다시 돌린다. β=0 행이 거짓양성률이다 (0.05 근처여야 정직하다).\n")
-    PW = power_curve(USE[PRIMARY].values, D, n_sim=200, n_perm=300, seed=7)
-    display(PW)
-    mde = min_detectable_effect(PW, 0.8)
-    print(f"  거짓양성률(β=0) = {PW.검출률.iloc[0]:.3f}")
-    print(f"  검출률 80% 에 닿는 최소 효과 ≈ β = {mde:.2f}  "
-          f"(특징 1 SD 가 타깃을 {mde:.1f} σ 움직여야 한다)")
-    if r1["순열p"] >= ALPHA:
+    # 곡선은 **특징값의 실제 분포** 위에 라벨을 심어 그린다. 상수 특징으로는 그릴 수
+    # 없으므로, 그럴 때만 변동이 있는 다른 사전 등록 특징으로 갈아타고 그 사실을 적는다.
+    _pwf = PRIMARY if PRIM_OK else next(
+        (c for c in EXPLORATORY if c in USE.columns
+         and USE[c].notna().all() and USE[c].std(ddof=1) > 1e-12), None)
+    if _pwf is None:
+        PW, mde = pd.DataFrame(), float("nan")
+        print("  ★ 사전 등록 특징 중 변동이 있는 것이 하나도 없다 — 검정력 곡선을 못 그린다.")
+    else:
+        if _pwf != PRIMARY:
+            print(f"  ※ {PRIMARY} 이(가) 상수라 **{_pwf}** 의 분포 위에서 그린다 "
+                  f"(설계의 검정력이지 그 특징의 성능이 아니다).\n")
+        PW = power_curve(USE[_pwf].values, D, n_sim=200, n_perm=300, seed=7)
+        display(PW)
+        mde = min_detectable_effect(PW, 0.8)
+        print(f"  거짓양성률(β=0) = {PW.검출률.iloc[0]:.3f}")
+        print(f"  검출률 80% 에 닿는 최소 효과 ≈ β = {mde:.2f}  "
+              f"(특징 1 SD 가 타깃을 {mde:.1f} σ 움직여야 한다)")
+    if r1 is not None and np.isfinite(mde) and r1["순열p"] >= ALPHA:
         print(f"\n  ★ 확증 검정이 귀무였다. 위 곡선을 같이 읽어라 —")
         print(f"     β = {mde:.1f} 보다 작은 효과는 이 설계(항체 {USE[GROUP].nunique()}개 ×"
               f" 링커 {int(USE.groupby(GROUP).size().median())}종)로는 **애초에 못 본다.**")
@@ -2995,7 +3062,8 @@ print("7절-C 함수 준비 완료")
 code(r'''
 # ── 7절-C 판정 ─────────────────────────────────────────────────────────────
 IFACE_RESULT = None
-_ok = ("ML_RESULT" in dir() and IFACE_SRC and len(IFACE) and "계면강도" in IFACE.columns)
+_ok = ("ML_RESULT" in dir() and "IFACE_SRC" in dir() and IFACE_SRC
+       and "IFACE" in dir() and len(IFACE) and "계면강도" in IFACE.columns)
 if not _ok:
     print("7절-C 건너뜀 —", "7절이 안 돌았다" if "ML_RESULT" not in dir()
           else "쓸 수 있는 계면 지표가 없다 (3절-B·3절-C 를 보라)")
@@ -3490,8 +3558,15 @@ code(r'''
 plt = setup_font()
 from matplotlib.patches import Ellipse
 # 앞 셀을 안 돌리고 이 셀만 다시 돌려도 죽지 않게 한다
-USE  = USE  if "USE"  in dir() else FEAT[~FEAT.합성]
-FEAT = FEAT if "FEAT" in dir() else pd.DataFrame()
+# ★ 빈 표를 만들 때 **열까지** 만든다. 열 없는 빈 DataFrame 은 `FEAT.합성` 에서
+#   'DataFrame 에 합성 속성이 없다' 로 죽는데, 그 문장은 원인(앞 절을 안 돌렸다)과
+#   아무 상관 없어 보인다. 방어선이 방어선 때문에 죽는 꼴이다.
+FEAT = FEAT if "FEAT" in dir() else pd.DataFrame(
+    {c: pd.Series(dtype=t) for c, t in (("블록", "object"), ("항체", "object"),
+                                        ("링커", "object"), ("길이", "float"),
+                                        ("조성", "object"), ("설계길이", "float"),
+                                        ("합성", "bool"))})
+USE  = USE  if "USE"  in dir() else FEAT[~FEAT.합성]   # FEAT 다음이어야 한다
 SIG = {f"Δ{k}": v for k, v in AB_SD.items()}
 LAND_X, LAND_Y = "ΔHL", "Δdc"       # ΔHC1 · ΔHC2 등으로 바꿔도 된다
 
@@ -3499,10 +3574,13 @@ LAND_X, LAND_Y = "ΔHL", "Δdc"       # ΔHC1 · ΔHC2 등으로 바꿔도 된�
 #   그들: 기준구조 A 까지의 RMSD  vs  기준구조 B 까지의 RMSD
 #   우리: ΔHL (VH-VL 꼬임각)     vs  Δdc (도메인 중심간 거리)
 #   기준점(ABB2)은 정의상 원점 (0,0) 이라 그들의 '기준 구조 점' 자리에 그대로 온다.
+E = E if ("E" in dir() and E is not None) else pd.DataFrame()
 _blk = (sorted(USE.블록.unique())[0] if len(USE)
-        else sorted(E.블록.dropna().astype(str).unique())[0])
-_G = E[(E.블록 == _blk) & (E.생성기 == GEN) & (~E.합성.astype(bool))].copy()
-_lk = [l for l in CONS[(CONS.블록 == _blk) & (~CONS.합성)].링커 if l in set(_G.링커)]
+        else sorted(E.블록.dropna().astype(str).unique())[0] if len(E) else None)
+_G = (E[(E.블록 == _blk) & (E.생성기 == GEN) & (~E.합성.astype(bool))].copy()
+      if _blk is not None else pd.DataFrame())
+_lk = ([l for l in CONS[(CONS.블록 == _blk) & (~CONS.합성)].링커 if l in set(_G.링커)]
+       if len(_G) else [])
 if len(_G) and _lk:
     cols = dict(zip(_lk, plt.cm.tab10.colors))
     xr = (min(float(_G[LAND_X].quantile(.005)), -3*SIG[LAND_X]),
@@ -3600,14 +3678,19 @@ if "ML_RESULT" in dir():
     R = ML_RESULT
     fig, ax = plt.subplots(1, 3, figsize=(13.5, 3.6))
     a = ax[0]                                           # 순열 귀무분포
-    nl = R["확증"]["_null"]; nl = nl[np.isfinite(nl)]
-    a.hist(nl, bins=25, color="lightsteelblue", ec="w")
-    a.axvline(R["확증"]["_obs"], c="crimson", lw=2,
-              label=f"관측 {R['확증']['일치도']:.2f}")
-    a.axvline(0.5, c="k", ls=":", lw=1, label="우연 0.50")
-    a.set_xlabel("항체 안 쌍 일치도", fontsize=9); a.set_ylabel("순열 횟수", fontsize=9)
-    a.legend(fontsize=7)
-    a.set_title(f"① 확증 — {PRIMARY}\n순열 p = {R['확증']['순열p']:.4f}", fontsize=10)
+    if R.get("확증") is None:      # 확증 특징이 상수여서 검정이 정의되지 않았다
+        a.text(.5, .5, f"① 확증 없음\n{PRIMARY} 가 상수", ha="center", va="center",
+               fontsize=10, transform=a.transAxes)
+        a.set_xticks([]); a.set_yticks([])
+    else:
+        nl = R["확증"]["_null"]; nl = nl[np.isfinite(nl)]
+        a.hist(nl, bins=25, color="lightsteelblue", ec="w")
+        a.axvline(R["확증"]["_obs"], c="crimson", lw=2,
+                  label=f"관측 {R['확증']['일치도']:.2f}")
+        a.axvline(0.5, c="k", ls=":", lw=1, label="우연 0.50")
+        a.set_xlabel("항체 안 쌍 일치도", fontsize=9); a.set_ylabel("순열 횟수", fontsize=9)
+        a.legend(fontsize=7)
+        a.set_title(f"① 확증 — {PRIMARY}\n순열 p = {R['확증']['순열p']:.4f}", fontsize=10)
 
     a = ax[1]                                           # 증분
     I = R["증분"]
