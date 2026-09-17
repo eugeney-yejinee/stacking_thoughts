@@ -761,6 +761,33 @@ f=0.25 면 f²=0.0625 로 작아 보이지만 B_oo 가 크게 음수면 이 항�
 `B22_열림 < B22_교차 < B22_닫힘` 이면 "열린 것끼리 잘 붙는다" 가 맞는 것이다.
 기준점이 낀 조합은 링커가 없는 분자와의 비교이므로 대조군으로만 읽어라.
 
+### ★ 두 번째 실행 — 시뮬레이션 직전까지 완벽했고 **플랫폼 이름 한 줄**에서 죽었다
+
+전체 출력을 찍게 고친 덕에 어디까지 갔는지가 보였다.
+
+```
+Using domains [[[1, 107], [123, 246]]]      ← 중첩 리스트 파싱 OK, Fv 가 한 강체
+Total number of components: 2                ← 두 종이 제대로 들어갔다
+Number of restraints for comp A: 1307
+Number of restraints for comp B: 1317        ← A·B 가 다르다 = 다른 구조다
+492 particles in the system                  ← 246 × 2 ✓
+ah: 492 particles, 3114 exclusions
+Ashbaugh-Hatch … lambda=1 sigma=0.68 · Debye-Hückel at 4.0 nm
+openmm.OpenMMException: There is no registered Platform called "CUDA"
+```
+
+폴리알라닌도 BBFlow 혼입도 고쳐진 것이 여기서 확인된다 (λ·σ 가 정상이고 BioEmu
+프레임만 들어갔다). **오직 플랫폼 이름만 틀렸다.**
+
+원인: `torch.cuda.is_available()` 로 GPU 를 감지해 `"CUDA"` 를 넘겼는데,
+**GPU 가 있어도 pip 으로 깐 OpenMM 에 CUDA 플랫폼이 등록 안 돼 있을 수 있다.**
+이 저장소 환경도 같다 — 등록된 것은 `['Reference', 'CPU']` 뿐이고
+`libOpenCL.so.1` 을 못 찾아 가속 플러그인 4건이 적재 실패했다.
+
+고침: **OpenMM 에 직접 물어본다.** 등록된 것 중 `CUDA > HIP > OpenCL > CPU` 순으로
+고르고, 가속이 안 잡히면 `getPluginLoadFailures()` 로 **왜 안 잡혔는지**까지 찍는다.
+CG 계는 492 입자라 작으므로 CPU 로도 돌릴 만하다 — 건당 소요 시간을 코드가 찍는다.
+
 ### 첫 실행이 6/6 실패한 이유 셋 — 전부 고쳤다
 
 1. **폴리알라닌.** CALVADOS 는 서열을 FASTA 가 아니라 **PDB 에서** 읽는다

@@ -4811,11 +4811,23 @@ def b22_from_rdf(r, g, r_core_from_grid=True):
                  + (2.0*np.pi*(r[0]**3)/3.0 if r_core_from_grid else 0.0))
 
 if RUN_CALVADOS and HAVE_CALV and CONF and RES_CSV:
-    try:
-        import torch as _t; _gpu = bool(_t.cuda.is_available())
-    except Exception:
-        _gpu = bool(shutil.which("nvidia-smi"))
-    PLAT = "CUDA" if _gpu else "CPU"
+    # ★ 플랫폼은 **OpenMM 에 직접 물어본다.** torch.cuda 로 GPU 를 감지해서 "CUDA" 를
+    #   넘기면 안 된다 — GPU 가 있어도 pip 으로 깐 OpenMM 에 CUDA 플랫폼이 **등록 안
+    #   돼 있을 수 있다.** 실측에서 정확히 그랬다:
+    #     openmm.OpenMMException: There is no registered Platform called "CUDA"
+    #   (시스템 구성은 완벽했고 이 한 줄에서만 죽었다.)
+    import openmm as _om
+    _names = [_om.Platform.getPlatform(i).getName()
+              for i in range(_om.Platform.getNumPlatforms())]
+    PLAT = next((x for x in ("CUDA", "HIP", "OpenCL", "CPU", "Reference")
+                 if x in _names), "Reference")
+    print(f"OpenMM 등록 플랫폼: {_names} → **{PLAT}** 를 쓴다")
+    _fails = list(_om.Platform.getPluginLoadFailures())
+    if PLAT in ("CPU", "Reference") and _fails:
+        print(f"  ※ 가속 플러그인이 {len(_fails)}건 적재 실패했다. 첫 줄:")
+        print(f"    {str(_fails[0])[:150]}")
+        print("    GPU 를 쓰려면 그 라이브러리를 맞춰라. 다만 이 계는 CG 라 작다 —")
+        print("    492 입자 × 1M 스텝이면 CPU 로도 몇 분이다. 그냥 돌려도 된다.")
     os.makedirs(f"{OUT}/calvados", exist_ok=True)
     _items = [(k, v) for k, v in CONF.items()
               if CALV_ONLY is None or k == tuple(CALV_ONLY)]
