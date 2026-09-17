@@ -247,10 +247,15 @@ def salt_bridges(traj, cut_nm=0.4):
                      if a.name in ("NZ", "NH1", "NH2", "NE", "ND1", "NE2")]
     if not acid or not base:
         return 0, []
+    # ★ (프레임, 산, 염기, 3) 중간배열이 실제 규모에서 수십 MB 라 프레임을 잘라 돈다.
     pairs = []
-    A = traj.xyz[:, acid, :]; B = traj.xyz[:, base, :]
-    d = np.linalg.norm(A[:, :, None, :] - B[:, None, :, :], axis=-1)   # (f, a, b)
-    occ = (d < float(cut_nm)).mean(axis=0)
+    occ = np.zeros((len(acid), len(base)), float)
+    CH = max(1, int(2e7 // max(len(acid) * len(base) * 3, 1)))      # 청크 크기
+    for s0 in range(0, traj.n_frames, CH):
+        A = traj.xyz[s0:s0 + CH, acid, :]; B = traj.xyz[s0:s0 + CH, base, :]
+        d = np.linalg.norm(A[:, :, None, :] - B[:, None, :, :], axis=-1)
+        occ += (d < float(cut_nm)).sum(axis=0)
+    occ /= max(traj.n_frames, 1)
     ai, bi = np.where(occ > 0.3)
     seen = set()
     for x, y in zip(ai, bi):
@@ -265,29 +270,21 @@ def salt_bridges(traj, cut_nm=0.4):
 
 
 def interface_contacts(traj, res_a, res_b, cut_nm=0.45):
-    """두 도메인 사이 잔기 접촉 수 (프레임 평균). VH–VL 계면이 버티는지 본다."""
+    """두 도메인 사이 잔기 접촉 수 (프레임 평균). VH–VL 계면이 버티는지 본다.
+
+    ★ 순수 파이썬 삼중 루프로 짜면 실제 scFv(120×110 잔기 × 1000 프레임)에서
+      1300만 번 호출이 돼 못 쓴다. mdtraj 의 C 구현(compute_contacts)에 넘긴다.
+    """
+    import mdtraj as md
     res_a, res_b = list(res_a), list(res_b)
     if not res_a or not res_b:
         raise ValueError("도메인 잔기 목록이 비었다")
-    xyz = traj.xyz
-    top = traj.topology
-    def heavy(rs):
-        return [[a.index for a in top.residue(i).atoms if a.element.symbol != "H"]
-                for i in rs]
-    HA, HB = heavy(res_a), heavy(res_b)
-    n = 0.0
-    for fr in range(traj.n_frames):
-        P = xyz[fr]
-        for ia in HA:
-            if not ia:
-                continue
-            pa = P[ia]
-            for ib in HB:
-                if not ib:
-                    continue
-                if np.min(np.linalg.norm(pa[:, None, :] - P[ib][None, :, :], axis=-1)) < cut_nm:
-                    n += 1
-    return n / max(traj.n_frames, 1)
+    pairs = np.array([(i, j) for i in res_a for j in res_b], dtype=int)
+    if len(pairs) == 0:
+        return 0.0
+    d, _ = md.compute_contacts(traj, contacts=pairs, scheme="closest-heavy",
+                               periodic=bool(traj.unitcell_lengths is not None))
+    return float((d < float(cut_nm)).sum(axis=1).mean())
 
 
 def chain_dims(traj, res_idx):

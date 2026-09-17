@@ -379,8 +379,13 @@ def measure(top_pdb, dcd, linker_seq=""):
     import mdtraj as md
     import fvobs as F
 
-    t = md.load(dcd, top=top_pdb)
-    t = t.atom_slice(t.topology.select("protein"))
+    # ★ 단백질 원자만 읽는다. 통째로 읽으면 실제 규모(45,000원자 × 1,000프레임)에서
+    #   540 MB 를 한 번에 올리게 돼 Colab 에서 OOM 이 난다. 단백질만이면 48 MB 다.
+    ref = md.load(top_pdb)
+    sel = ref.topology.select("protein")
+    if len(sel) == 0:
+        raise ValueError("위상에 단백질 원자가 없다")
+    t = md.load(dcd, top=top_pdb, atom_indices=sel)
     if t.n_frames == 0:
         raise ValueError("프레임이 0개다 — 저장 간격이 프로덕션보다 길지 않은지 봐라")
 
@@ -514,7 +519,7 @@ def selftest():
 # ════════════════════════════════════════════════════════════════════════════
 # 본체
 # ════════════════════════════════════════════════════════════════════════════
-def plan(systems, rate, budget_h, ns, seeds):
+def plan(systems, rate, budget_h, ns, seeds, prep_s=0.0):
     """주어진 시간에 맞춰 규모를 정한다. **버린 것을 반드시 찍는다.**
 
     우선순위: 모든 구성체 × 양쪽 pH × 씨앗 1  →  그 다음 씨앗을 늘린다.
@@ -524,11 +529,14 @@ def plan(systems, rate, budget_h, ns, seeds):
         return systems, ns, seeds, []
     per_ns_s = 1000.0 / DT_PS / max(rate, 1e-9)          # 1 ns 당 초
     budget_s = budget_h * 3600.0
+    # ★ 준비(pdbfixer·수소·용매화·createSystem)는 (구성체 × pH) 당 한 번이고
+    #   실제 규모에서 계당 2분이 넘는다. 이걸 빼먹으면 추정이 크게 낙관적이 된다.
+    prep_total = len(systems) * len(PH_LIST) * prep_s
     for cand_seeds in range(seeds, 0, -1):
         for cand_ns in (ns, 20.0, 10.0, 5.0, 2.0, 1.0):
             if cand_ns > ns:
                 continue
-            need = len(systems) * len(PH_LIST) * cand_seeds * cand_ns * per_ns_s
+            need = prep_total + len(systems) * len(PH_LIST) * cand_seeds * cand_ns * per_ns_s
             if need <= budget_s:
                 drop = []
                 if cand_ns < ns:
@@ -538,7 +546,7 @@ def plan(systems, rate, budget_h, ns, seeds):
                                 f"(씨앗이 1이면 잡음 분모가 없다)")
                 return systems, cand_ns, cand_seeds, drop
     # 1 ns × 씨앗 1 로도 안 되면 구성체를 줄인다 — 항체는 최대한 남긴다
-    per_run = len(PH_LIST) * 1.0 * per_ns_s
+    per_run = len(PH_LIST) * (prep_s + 1.0 * per_ns_s)
     k = max(2, int(budget_s // max(per_run, 1e-9)))
     by_ab = {}
     for s in systems:
@@ -582,7 +590,7 @@ def main(argv=None):
     head("[2] 사전점검 — 짧게 돌려 배선을 확인하고 속도를 잰다", "=")
     s0 = systems[0]
     say(f"  대상 {s0['항체']} / {s0['링커']} ({s0['출처']})")
-    qs, rates = {}, []
+    qs, rates, preps = {}, [], []
     for ph in PH_LIST:
         t0 = time.time()
         try:
@@ -591,8 +599,10 @@ def main(argv=None):
             say(f"\n  ★★ pH {ph} 준비 실패 — 전체 출력:")
             import traceback; traceback.print_exc()
             return 1
+        preps.append(time.time() - t0)
         say(f"  pH {ph}: 원자 {p['atoms']:,} · 잔기 {p['nres']} · "
-            f"이황화 **{p['ss']}개** · 단백질 순전하 **{p['q']:+.1f}**  ({time.time()-t0:.0f}s)")
+            f"이황화 **{p['ss']}개** · 단백질 순전하 **{p['q']:+.1f}**  "
+            f"(준비 {time.time()-t0:.0f}s)")
         if p["ss"] == 0 and p["nres"] > 150:
             say("      ★★ 이황화가 0개다. scFv 라면 도메인당 하나씩 있어야 한다.")
             say("         입력 PDB 에 수소가 붙어 있거나 Cys 가 잘렸을 수 있다.")
@@ -620,13 +630,16 @@ def main(argv=None):
     say("    ✔ Asp/Glu 가 실제로 중성화됐다 — 진짜 pH 3 조건이다.")
 
     rate = float(np.mean(rates))
-    systems, ns, seeds, dropped = plan(systems, rate, a.budget_hours, a.ns, a.seeds)
+    prep_s = float(np.mean(preps))
+    systems, ns, seeds, dropped = plan(systems, rate, a.budget_hours, a.ns, a.seeds, prep_s)
     n_run = len(systems) * len(PH_LIST) * seeds
     per_run_s = ns * 1000 / DT_PS / max(rate, 1e-9)
     say(f"\n  속도 {rate:.0f} 스텝/초 = **{rate*DT_PS*86.4/1000:.0f} ns/일**")
     say(f"  계획: 구성체 {len(systems)} × pH {len(PH_LIST)} × 씨앗 {seeds} = **{n_run}건**")
-    say(f"        계당 {ns:g} ns ≈ {per_run_s/60:.0f}분 → **총 약 {per_run_s*n_run/3600:.1f}시간**"
-        f"  (준비 시간 별도)")
+    prep_total = len(systems) * len(PH_LIST) * prep_s
+    say(f"        준비 {len(systems)*len(PH_LIST)}회 × {prep_s:.0f}s = {prep_total/60:.0f}분"
+        f"  +  MD {n_run}건 × {per_run_s/60:.1f}분")
+    say(f"        → **총 약 {(prep_total + per_run_s*n_run)/3600:.1f}시간**")
     for d in dropped:
         say(f"  ★ 줄였다: {d}")
     if seeds < 2:
@@ -647,18 +660,34 @@ def main(argv=None):
     if steps and every > steps:
         every = max(1, steps // 2)
     t_all = time.time()
+    from openmm.app import PDBFile
     for i, s in enumerate(systems, 1):
         for ph in PH_LIST:
-            for sd in range(seeds):
+            # ★ 씨앗 루프를 **안쪽**에 둔다. 씨앗은 속도 초기값만 다르므로 준비된 계를
+            #   그대로 쓴다. 예전처럼 씨앗마다 prepare() 를 부르면 준비 시간이 씨앗
+            #   배수로 늘어난다 — 실제 규모(계당 ~2분)에서 76회면 준비만 2.7시간이다.
+            todo = [sd for sd in range(seeds)
+                    if f"{s['항체']}|{s['링커']}|{ph}|s{sd}" not in R]
+            if not todo:
+                say(f"  [{i}/{len(systems)}] {s['항체']}/{s['링커']} pH{ph}  "
+                    f"건너뜀 (씨앗 {seeds}개 다 있다)")
+                continue
+            try:
+                t_prep = time.time()
+                p = prepare(s["pdb"], ph, ffpair)
+                say(f"  [{i}/{len(systems)}] {s['항체']}/{s['링커']} pH{ph} · "
+                    f"원자 {p['atoms']:,} · 이황화 {p['ss']} · 순전하 {p['q']:+.1f} "
+                    f"(준비 {time.time()-t_prep:.0f}s)")
+            except Exception as e:
+                say(f"  [{i}/{len(systems)}] {s['항체']}/{s['링커']} pH{ph}  ★ 준비 실패: "
+                    f"{type(e).__name__}: {e}")
+                import traceback; traceback.print_exc()
+                continue
+            for sd in todo:
                 key = f"{s['항체']}|{s['링커']}|{ph}|s{sd}"
-                if key in R:
-                    say(f"  [{i}/{len(systems)}] {key}  건너뜀 (이미 있다)"); continue
                 tag = re.sub(r"[^\w.-]", "_", key)
                 top, dcd, chk = f"{WORK}/{tag}.pdb", f"{WORK}/{tag}.dcd", f"{WORK}/{tag}.chk"
-                say(f"  [{i}/{len(systems)}] {key} …")
                 try:
-                    from openmm.app import PDBFile
-                    p = prepare(s["pdb"], ph, ffpair)
                     if not os.path.isfile(top):
                         with open(top, "w") as fh:
                             PDBFile.writeFile(p["topology"], p["positions"], fh)
@@ -669,11 +698,11 @@ def main(argv=None):
                              HMW=s.get("HMW", float("nan")))
                     R[key] = o
                     save_json(R, res_path)
-                    say(f"      ✔ SAP_max {o['SAP_max']:+.2f} · 패치 {o['최대연속패치']:.2f} nm²"
-                        f" · 염다리 {o['염다리수']} · 링커노출 {o['링커노출']:.2f}"
-                        f"  ({(time.time()-t_all)/60:.0f}분 경과)")
+                    say(f"      s{sd} ✔ SAP_max {o['SAP_max']:+.2f} · "
+                        f"패치 {o['최대연속패치']:.2f} nm² · 염다리 {o['염다리수']} · "
+                        f"링커노출 {o['링커노출']:.2f}  ({(time.time()-t_all)/60:.0f}분 경과)")
                 except Exception as e:
-                    say(f"      ★ 실패: {type(e).__name__}: {e}")
+                    say(f"      s{sd} ★ 실패: {type(e).__name__}: {e}")
                     import traceback; traceback.print_exc()
 
     return analyze(R, systems)
@@ -747,7 +776,12 @@ def analyze(R, systems):
         return 0
 
     # ── 이제서야 y 를 본다 ──────────────────────────────────────────────────
-    head("[5] 이제 HMW 와 대조한다 — 살아남은 관측값만", "=")
+    head("[5] 이제 HMW 와 대조한다", "=")
+    say("  ★ 사전등록: **주 관측값은 pH 3 에서의 `링커노출` 하나다.**")
+    say("    이유 — 기전이 '링커가 끈끈한 면을 덮으면 덜 붙는다' 이고, 이 값만이")
+    say("    설계상 항체 안에서 변한다 (같은 항체면 표면도 패치도 같고 링커만 다르다).")
+    say("    응집이 일어나는 상태는 pH 3 이므로 차분이 아니라 **pH 3 절대값**을 쓴다.")
+    say("    나머지는 전부 **탐색**이다 — p 값을 그대로 읽으면 안 된다.\n")
     hm = D.groupby(["항체", "링커"]).HMW.first().reset_index()
     T2 = T.merge(hm, on=["항체", "링커"], how="left").dropna(subset=["HMW"])
     if len(T2) < 4:
@@ -767,8 +801,16 @@ def analyze(R, systems):
             c += 1.0 if h[b] > h[a] else (0.5 if h[b] == h[a] else 0.0)
         return c
 
+    # 주 검정에 쓸 pH 3 절대값 표 (차분이 아니다)
+    PRIM = "링커노출"
+    prim = (D[D.pH == 3.0].groupby(["항체", "링커"])[PRIM].mean().reset_index()
+            .rename(columns={PRIM: "주_링커노출_pH3"}))
+    T2 = T2.merge(prim, on=["항체", "링커"], how="left")
+
     out = []
-    for c in live:
+    for c in (["주_링커노출_pH3"] + [x for x in live if x != "주_링커노출_pH3"]):
+        if c not in T2.columns:
+            continue
         groups, obs = [], 0.0
         for ab, gg in T2.groupby("항체"):
             if len(gg) < 2 or not np.isfinite(gg[c]).all():
@@ -789,20 +831,34 @@ def analyze(R, systems):
         out.append(dict(관측값=c, 일치=obs, 최대=float(k.max()),
                         귀무=round(float((k * pr).sum()), 1),
                         p=round(float(pr[k >= obs].sum()), 4)))
-    P = pd.DataFrame(out).sort_values("p")
+    P = pd.DataFrame(out)
+    if not len(P):
+        say("  검정할 관측값이 없다."); return 0
+    P["역할"] = ["**주(사전등록)**" if c == "주_링커노출_pH3" else "탐색"
+                 for c in P.관측값]
     say(P.to_string(index=False))
     P.to_csv(f"{WORK}/rank_test.csv", index=False, encoding="utf-8-sig")
 
     head("판정", "=")
-    if len(P) and P.p.iloc[0] < 0.05:
-        say(f"  ✔ **{P.관측값.iloc[0]}** 가 HMW 순위를 맞힌다 "
-            f"({P.일치.iloc[0]:.1f}/{P.최대.iloc[0]:.0f}, 정확 순열 p = {P.p.iloc[0]:.4f})")
-        say(f"    ★ 다만 관측값 {len(P)}개를 다 본 뒤 최소 p 를 골랐다 — 다중비교가 있다.")
-        say(f"      Bonferroni 로 보면 p × {len(P)} = {P.p.iloc[0]*len(P):.4f}")
+    pr = P[P.관측값 == "주_링커노출_pH3"]
+    if len(pr):
+        r0 = pr.iloc[0]
+        ok = r0.p < 0.05
+        say(f"  주 검정 (사전등록): 링커노출@pH3 → HMW 순위 "
+            f"{r0.일치:.1f}/{r0.최대:.0f} (귀무 {r0.귀무}), **정확 순열 p = {r0.p:.4f}**")
+        say("  " + ("✔ 기전 예측이 맞았다. 이건 다중비교가 없는 단일 검정이다."
+                    if ok else
+                    "✗ 기전 예측이 안 맞았다. 이게 결론이고, 아래 탐색으로 뒤집으면 안 된다."))
     else:
-        pm = P.p.min() if len(P) else float("nan")
-        say(f"  ✗ 어느 관측값도 유의하지 않다 (최소 p = {pm:.4f}).")
-        say("    항체내 쌍이 적어 검정력이 낮거나, 이 축이 HMW 와 무관하다.")
+        say("  ★ 주 관측값(링커노출@pH3)을 계산하지 못했다 — 링커 구간을 못 찾았을 것이다.")
+        say("    엑셀의 링커 서열이 구조 서열 안에 **유일하게** 들어 있어야 한다.")
+    ex = P[P.관측값 != "주_링커노출_pH3"]
+    if len(ex):
+        b = ex.sort_values("p").iloc[0]
+        say(f"\n  탐색 {len(ex)}개 중 최소: {b.관측값} p = {b.p:.4f} "
+            f"→ Bonferroni {min(1.0, b.p*len(ex)):.4f}")
+        say("    ★ 탐색은 가설 생성용이다. 이걸 결과로 보고하면 낚시다 —")
+        say("      다음 라운드에 **사전등록**해서 새 데이터로 확인해야 한다.")
     say(f"\n  저장: {WORK}/ph3_delta.csv · within_share.csv · rank_test.csv · results.json")
     head("끝", "=")
     return 0
