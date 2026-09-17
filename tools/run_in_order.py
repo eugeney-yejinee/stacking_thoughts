@@ -291,7 +291,9 @@ def run(path, stop_on_error=True, over=None, empty=False):
         g["venv_metrics"] = lambda *a, **k: f"{tmp}/venv"
         g["venv_be"] = lambda *a, **k: f"{tmp}/venv"
         g["N_SEED_REP"] = 0
-        g["RUN_CALVADOS"] = False      # 설치·GPU 가 없다. 끈 경로만 탄다.
+        # ★ 이제 기본이 True 다. 여기선 calvados 설치가 안 되므로 HAVE_CALV=False
+        #   경로를 타게 둔다 — 그 분기(설치 실패 → 이유를 찍고 멈춤)도 시험 대상이다.
+        g["RUN_CALVADOS"] = True
         # ★ 그래도 10절-D 의 **판정 경로**는 돌려야 한다. 그래서 가짜 calvados.csv 를
         #   미리 깔아 둔다 (populate 가 쓴다) — 혼합식·프레임잡음·항체내몫 분기가
         #   한 번도 안 돌면 깨져도 모른다.

@@ -744,6 +744,33 @@ f=0.25 면 f²=0.0625 로 작아 보이지만 B_oo 가 크게 음수면 이 항�
 곧 답이 된다. 구성체 간 차이가 프레임 간 SD 의 2배를 못 넘으면 우리가 재는 것은
 프레임 선택 잡음이고, 10절-D 가 그렇게 찍는다. 씨앗 반복과 같은 역할이다.
 
+### 실행 셀 (10절-A3) — 저장소 소스를 직접 읽고 썼다
+
+`KULL-Centre/CALVADOS` 를 받아 실제 API 를 확인했다. 추측이 아니다.
+
+| 항목 | 확인 결과 |
+|---|---|
+| 설치 | **PyPI 에 없다.** `pip install calvados` 실패 → `git+https://github.com/KULL-Centre/CALVADOS.git` |
+| λ 척도 열 | `residues.csv` 가 `three,one,MW,lambdas,sigmas,q,bondlength` — 추측한 `lambdas`/`one` 이 맞았다 |
+| 두 사슬 예제 | `examples/two_IDR_MDP` (IDR + 다중도메인, 두 사슬) |
+| B22 조리법 | README 에 그대로: `md.compute_rdf` → `-2π∫(rdf-1)r²dr`. `rdf-1` 이 마이어 f 함수라 우리 식과 동치 |
+
+**★ Fv 를 통째로 강체로 묶는 법.** `build.py:get_ssdomains` 가 **중첩 리스트**를 하나의
+`ssdomains` 항목으로 합치고, `check_ssdomain(req_both=True)` 가 **같은 항목 안의 i,j**
+에만 구속을 건다. 그래서
+
+```yaml
+scFv: [[[1, b1], [b2+1, N]]]    # VH+VL 한 강체 — 배향 고정 (기본, CALV_RIGID_FV=True)
+scFv: [[1, b1], [b2+1, N]]      # 따로 — 짝지음을 비특이적 λ 가 정한다 (권장 안 함)
+```
+
+`b22_from_rdf` 를 fvcalv 에 넣었다 (상류와 같은 식). g = exp(−W/kT) 이므로 PMF 를
+거치지 않아 배제 영역에서 log 가 발산하지 않는다 — 궤적에서 낼 때 이 쪽이 안전하다.
+상류 식이 빼먹는 격자 **밖**(0~r[0]) 완전배제분 +2π·r[0]³/3 을 더한다.
+자체 시험에서 두 경로가 딱딱한 구 해석해와 모두 일치한다 (35/35).
+
+이어달리기도 된다 — 구조마다 `{OUT}/calvados/*.json` 에 저장하므로 끊겨도 이어서 간다.
+
 ### 설계 결정 셋 — 이유와 함께
 
 1. **λ 끈끈함 척도를 손으로 적지 않는다.** 패키지 데이터 파일에서 읽고, 못 찾으면

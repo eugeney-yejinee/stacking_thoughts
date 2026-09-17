@@ -87,6 +87,40 @@ def b22_from_pmf(r, w, T=298.15, r_core=None):
     return float(-2.0 * np.pi * (integral + hard_core))
 
 
+def b22_from_rdf(r, g, r_core_from_grid=True):
+    """동경분포함수 g(r) 에서 바로 B22 를 낸다 — CALVADOS 상류 조리법과 같은 식.
+
+        B22 = −2π ∫ [g(r) − 1] r² dr
+
+    g(r) = exp(−W(r)/kT) 이므로 (g−1) 이 곧 마이어 f 함수다. PMF 를 거치지 않으니
+    g=0 인 배제 영역에서 log 가 발산하는 문제가 없다 — 그래서 궤적에서 낼 때는
+    이 쪽이 `b22_from_pmf` 보다 안전하다.
+
+    CALVADOS 의 two_IDR_MDP 예제가 쓰는 식과 같다:
+        r, rdf = md.compute_rdf(t, pairs=[[0,1]], r_range=(.5,15), bin_width=.1)
+        b22 = -2*np.pi*np.trapz((rdf-1)*r*r, r)
+
+    다만 상류 식은 격자 **밖**(0 ~ r[0])을 빼먹는다. 거기는 언제나 완전 배제라
+    +2π·r[0]³/3 을 더해야 한다. 단백질이면 r[0]=0.5 nm 에서 0.26 nm³ 로 작지만,
+    작은 분자나 격자를 넓게 잡았을 때는 안 작다. r_core_from_grid=False 면 안 더한다.
+    """
+    r = np.asarray(r, float)
+    g = np.asarray(g, float)
+    if r.ndim != 1 or r.shape != g.shape:
+        raise ValueError("r 과 g 는 같은 길이의 1차원 배열이어야 한다")
+    if len(r) < 3:
+        raise ValueError("적분하려면 점이 3개는 있어야 한다")
+    o = np.argsort(r)
+    r, g = r[o], g[o]
+    if np.any(r <= 0):
+        raise ValueError("r 은 양수여야 한다")
+    tz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+    out = -2.0 * np.pi * tz((g - 1.0) * r ** 2, r)
+    if r_core_from_grid:
+        out += 2.0 * np.pi * (r[0] ** 3) / 3.0
+    return float(out)
+
+
 def b22_reduced(b22_nm3, sigma):
     """B22 를 같은 접촉지름 딱딱한 구의 값으로 나눈 무차원 값.
 
@@ -262,6 +296,6 @@ def within_share(values, groups):
     return float(sw ** 2 / tot) if tot > 1e-30 else float("nan")
 
 
-__all__ = ["b22_from_pmf", "b22_reduced", "b22_mixture", "open_excess",
+__all__ = ["b22_from_pmf", "b22_from_rdf", "b22_reduced", "b22_mixture", "open_excess",
            "conformer_noise", "sticky_exposure", "linker_sweep",
            "intermolecular_contacts", "within_share", "KB"]

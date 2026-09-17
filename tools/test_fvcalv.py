@@ -6,7 +6,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from fvcalv import (b22_from_pmf, b22_reduced, b22_mixture, open_excess,
+from fvcalv import (b22_from_pmf, b22_from_rdf, b22_reduced, b22_mixture, open_excess,
                     conformer_noise, sticky_exposure, linker_sweep,
                     intermolecular_contacts, within_share)
 
@@ -40,6 +40,22 @@ check("무차원화 = 1", abs(b22_reduced(b, SIG) - 1.0) < 0.02,
 # 코어를 키우면 배제부피가 σ³ 으로 커져야 한다
 b_big = b22_from_pmf(r, np.zeros_like(r), r_core=2 * SIG)
 check("B22 ∝ σ³", abs(b_big / b - 8.0) < 0.05, f"비 {b_big / b:.3f} (기대 8)")
+
+# ── 1b. g(r) 에서 바로 — 상류(CALVADOS) 조리법과 같은 답이 나오나 ─────────
+print("\n[1b] B22 from g(r) — PMF 경로와 같은 답이어야 한다")
+gh = np.where(r < SIG, 0.0, 1.0)                 # 딱딱한 구의 g(r)
+b_rdf = b22_from_rdf(r, gh)
+check("g(r) 경로도 해석해와 맞는다", abs(b_rdf - exact)/exact < 0.02,
+      f"{b_rdf:.2f} vs {exact:.2f}")
+check("두 경로가 서로 일치", abs(b_rdf - b)/abs(b) < 0.02, f"{b_rdf:.2f} vs {b:.2f}")
+# 인력 우물: g = exp(+depth/kT) 인 껍질
+from fvcalv import KB as _KB
+gw = np.where(r < SIG, 0.0, np.where(r < SIG + 1.0, np.exp(2.0/(_KB*298.15)), 1.0))
+check("인력이 있으면 B22 가 내려간다", b22_from_rdf(r, gw) < b_rdf,
+      f"{b22_from_rdf(r, gw):.1f} < {b_rdf:.1f}")
+check("격자 안쪽 코어를 더한다",
+      abs(b22_from_rdf(r, gh) - b22_from_rdf(r, gh, r_core_from_grid=False)
+          - 2*np.pi*r[0]**3/3) < 1e-9)
 
 # ── 2. 인력을 넣으면 B22 가 내려간다 ────────────────────────────────────────
 print("\n[2] 인력을 넣으면 B22 가 내려가야 한다")
