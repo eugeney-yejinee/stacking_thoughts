@@ -209,6 +209,19 @@ RUN_ML     = True     # 6~8절 분석. GPU 불필요 — 따로 다시 돌려도
 #   차례로 돌릴 때 3절-B 가 NameError 로 죽는다.
 REUSE_CSV  = True     # False 로 두면 표를 무시하고 전부 다시 잰다
 
+# ── CALVADOS — **두 사슬**을 실제로 만나게 한다 (10절) ─────────────────────
+#   BioEmu 는 단일 사슬만 다룬다. HMW 는 둘이 붙은 결과다. 그 사이가 비어 있었다.
+#   그리고 단일사슬 기술자로는 무엇을 정의해도 길이의 함수로 환원된다 —
+#   `링커신장도` 가 길이와 rho −0.99 였다. 두 사슬을 만나게 해야 새 축이 나온다.
+RUN_CALVADOS = False  # 켜면 10절이 돈다. GPU 권장 · 구성체당 수십 분
+CALV_IONIC   = 0.15   # 이온강도 (M). **실제 제형에 맞춰라** — Whitlow218 의 K/E 가
+                      #   여기서 실제로 작동한다 (Debye 스크리닝이 명시적이다)
+CALV_PH      = 7.4    # 전하 결정용
+CALV_TEMP    = 298.15 # K
+CALV_NCHAIN  = 2      # 2 = B22 용 한 쌍. 늘리면 묽은상 회합까지 본다
+CALV_STEPS   = 2_000_000
+CALV_PATCH_Q = 0.25   # '끈끈한 패치' = 소수성 상위 25% 표면 잔기
+
 # ── 사전 등록 임계 — 결과 보기 전에 박는다 ─────────────────────────────────
 # 짝지음 판정 — **절대 dc** 로 한다. Δdc(기준점 대비)로 하면 기준점이 특이한 항체에서
 # '붙었다' 의 뜻이 구성체마다 달라진다.
@@ -241,7 +254,8 @@ print(f"출력 {OUT}  (v09 와 같은 폴더 — 이미 만든 것은 다시 안
 print(f"블록 {BLOCKS} · 짝지음 임계 {PAIR_DC} Å · 순열 {N_PERM} · 예산 {DEADLINE_H} h")
 print("  켜짐: " + ", ".join(k for k, v in
       [("ABB2", RUN_ABB2), ("BioEmu", RUN_BIOEMU),
-       ("합성패널", RUN_PANEL), ("ML", RUN_ML)] if v))
+       ("합성패널", RUN_PANEL), ("ML", RUN_ML),
+       ("CALVADOS", RUN_CALVADOS)] if v))
 ''')
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -4100,6 +4114,288 @@ for _, q in CONS[~CONS.합성].groupby("항체").head(1).iterrows():
 print("\n※ 백본만 있다 (N·CA·C·CB·O). 곁사슬은 BioEmu 출력에 없다 —")
 print("  bioemu.sidechain_relax 로 복원할 수 있지만 그건 사후 패킹이지 샘플링이 본 것이 아니다.")
 print(f"{elapsed()} 9절 끝")
+''')
+
+# ═════════════════════════════════════════════════════════════════════════════
+md(r'''
+## 10절 · CALVADOS — **두 사슬**을 실제로 만나게 한다
+
+### 왜 여기까지 와야 했나
+BioEmu 는 단일 사슬만 다룬다. 지금까지 잰 것은 전부 *"단량체 하나가 어떤 모양인가"*
+이고, HMW 는 *"둘이 만나서 붙었나"* 다. 그 사이는 모델이 아니라 **가설**이었다.
+
+그리고 단일사슬 기술자로는 무엇을 정의해도 결국 **링커 길이의 함수로 환원된다.**
+`링커신장도`(말단간/윤곽길이)가 제일 셌지만 길이와 rho **−0.99** 였다 — 말단간은
+도메인 기하가 정하니 거의 상수라서 신장도 ≈ 상수/길이가 된다. 증분 +0.000.
+**두 사슬을 만나게 해야 새 축이 나온다.**
+
+### 물리 하나 — "만날 확률" 은 거의 안 변한다
+Smoluchowski 충돌 속도 `k_D ∝ R·D` 인데 `D ∝ 1/R` 이라 **R 이 상쇄된다.**
+링커가 펴져서 분자가 커져도 **만나는 빈도 자체는 거의 그대로**다.
+바뀌는 것은 **만나서 붙을 확률**이다. 그래서 겨냥할 양은
+
+- **B22** — 만남당 알짜 인력. 음수면 응집 경향. SLS·CG-MALS 로 **실측도 되는 양**이다.
+- **끈끈한 면 노출** — 링커가 그 면을 덮고 있나 비켜 있나.
+
+후자가 "링커가 자유분방하면 표면이 더 자주 드러난다" 의 직접 대응물이다.
+
+### 모형 설정 — 왜 Fv 를 통째로 강체로 두나
+CALVADOS 3 은 접힌 도메인을 탄성 네트워크로 묶고 IDR 만 유연하게 둔다.
+여기서는 **VH+VL 을 하나의 강체**로 둔다 (ABodyBuilder2 의 짝지은 구조 그대로).
+이유: CALVADOS 의 λ 척도는 IDP 용이라 **VH-VL 같은 특이적 계면을 못 만든다.**
+도메인을 따로 풀어 놓으면 짝지음 여부를 비특이적 끈끈함이 정해 버려서 못 믿는다.
+Fv 를 강체로 고정하면 묻는 것이 깨끗해진다 — **링커가 바깥 표면을 얼마나 가리고,
+두 분자가 얼마나 붙는가.**
+
+### ★ 이것으로 증명되지 않는 것
+CALVADOS 는 **비특이적·콜로이드적 회합**만 본다. VH(1)-VL(2) **도메인 교환(diabody)
+은 재현되지 않는다** — 모양 상보성이 만드는 특이적 결합이기 때문이다.
+B22 가 나와도 "도메인 교환 가설을 검정했다" 고 쓰면 안 된다. 다른 기전이다.
+
+### 표본 문제를 어떻게 피하나
+B22 와 노출은 **라벨이 필요 없다.** 합성 링커 패널 32개에 그대로 돌릴 수 있고,
+조성 × 길이 직교 설계에서 "조성이 B22 를 움직이는가" 를 n=5 제약 없이 물을 수 있다.
+그래서 **항체내몫을 먼저 본다** — 0.3 미만이면 또 항체를 재는 것이고,
+그때는 라벨 검정까지 갈 필요가 없다. 그 판정에 라벨은 안 쓴다.
+''')
+
+code(r'''
+# ── 10절-A · CALVADOS 설치와 입력 만들기 ──────────────────────────────────
+if not RUN_CALVADOS:
+    print("10절 건너뜀 (RUN_CALVADOS=False)")
+    print("  켜기 전에 읽어라: 구성체당 수십 분이고 GPU 가 사실상 필요하다.")
+    print("  먼저 실측 4구성체만 돌려 **항체내몫**을 보라 — 0.3 미만이면 거기서 접는다.")
+    CALV = pd.DataFrame()
+else:
+    import importlib
+    HAVE_CALV = False
+    try:
+        importlib.import_module("calvados"); HAVE_CALV = True
+    except Exception:
+        print("calvados 설치 중 (몇 분)…", flush=True)
+        sh("pip -q install openmm calvados", timeout=1800)
+        try:
+            importlib.import_module("calvados"); HAVE_CALV = True
+        except Exception as e:
+            print(f"★ calvados 를 못 올렸다: {type(e).__name__}: {e}")
+    if HAVE_CALV:
+        import calvados
+        print(f"calvados {getattr(calvados, '__version__', '?')} 준비")
+
+    # ── 잔기별 파라미터는 **패키지에서 읽는다** ─────────────────────────────
+    #   λ 끈끈함 척도를 여기에 손으로 적으면 안 된다. 그건 지어내는 것이다.
+    #   패키지가 들고 있는 표를 그대로 쓰고, 못 찾으면 그 사실을 말하고 멈춘다.
+    LAM = None
+    if HAVE_CALV:
+        try:
+            import calvados.data as _cd, os as _os, glob as _glob
+            _cand = _glob.glob(_os.path.join(_os.path.dirname(_cd.__file__), "*.csv"))
+            for _f in _cand:
+                _t = pd.read_csv(_f)
+                _c = [c for c in _t.columns if str(c).lower() in ("lambdas", "lambda")]
+                _o = [c for c in _t.columns if str(c).lower() in ("one", "onelettercode", "resname")]
+                if _c and _o:
+                    LAM = dict(zip(_t[_o[0]].astype(str), _t[_c[0]].astype(float)))
+                    print(f"  λ 척도를 패키지에서 읽었다: {_os.path.basename(_f)} "
+                          f"({len(LAM)} 잔기)")
+                    break
+        except Exception as e:
+            print(f"  λ 표 읽기 실패: {type(e).__name__}: {e}")
+    if HAVE_CALV and LAM is None:
+        print("  ★★ λ 끈끈함 척도를 패키지에서 못 찾았다.")
+        print("     **여기에 손으로 적어 넣지 마라** — 지어낸 척도로 낸 B22 는 숫자일 뿐이다.")
+        print("     calvados 버전을 확인하고 데이터 파일 경로를 맞춰라. 10절은 멈춘다.")
+        HAVE_CALV = False
+
+    CALV_IN = f"{OUT}/calvados"; os.makedirs(CALV_IN, exist_ok=True)
+    print(f"  작업 폴더 {CALV_IN}")
+    print(f"  조건: 이온강도 {CALV_IONIC} M · pH {CALV_PH} · {CALV_TEMP} K · "
+          f"사슬 {CALV_NCHAIN}개 · {CALV_STEPS:,} 스텝")
+    print("  ※ 이온강도를 **실제 제형에 맞춰라.** Debye 스크리닝이 명시적이라")
+    print("    Whitlow218 의 K/E 가 여기서 실제로 작동한다.")
+''')
+
+code(r'''
+# ── 10절-B · 끈끈한 패치 정의 — 무엇이 '붙을 면' 인가 ──────────────────────
+# ABodyBuilder2 기준 구조에서 **표면에 드러난 소수성 잔기**를 고른다.
+# 이것이 링커가 가릴 수도 있고 안 가릴 수도 있는 면이고, 다른 분자가 붙을 면이다.
+# ★ 항체마다 다르다 — 그래서 '링커 × 도메인' 상호작용이 여기로 들어온다.
+_KD_HYDRO = set("AVLIMFWYC")
+
+def sticky_patch(ref_pdb, q=None):
+    """기준 구조 → 끈끈한 패치 잔기 색인 (사슬 안 0부터).
+
+    표면 노출(상대 SASA)이 중앙값 위이고 소수성인 잔기 중 상위 q 분위.
+    곁사슬이 있는 **ABB2 구조**에서 뽑는다 — BioEmu 백본으로는 SASA 가 안 나온다.
+    """
+    q = CALV_PATCH_Q if q is None else q
+    st = first_model(ref_pdb)
+    if st is None:
+        return {}, "기준 구조를 못 읽었다"
+    from Bio.PDB.SASA import ShrakeRupley
+    ShrakeRupley().compute(st, level="R")
+    out = {}
+    for ch in st:
+        rs = [r for r in ch if "CA" in r]
+        if len(rs) < 40:
+            continue
+        sasa = np.array([getattr(r, "sasa", np.nan) for r in rs], float)
+        aa = [_3to1_g.get(r.get_resname(), "X") for r in rs]
+        hydro = np.array([a in _KD_HYDRO for a in aa])
+        expo = sasa > np.nanmedian(sasa)
+        cand = np.where(hydro & expo)[0]
+        if len(cand) == 0:
+            out[ch.id] = np.array([], int); continue
+        k = max(1, int(round(q * len(rs))))
+        out[ch.id] = cand[np.argsort(-sasa[cand])][:k]
+    return out, ""
+
+_3to1_g = {"ALA":"A","CYS":"C","ASP":"D","GLU":"E","PHE":"F","GLY":"G","HIS":"H",
+           "ILE":"I","LYS":"K","LEU":"L","MET":"M","ASN":"N","PRO":"P","GLN":"Q",
+           "ARG":"R","SER":"S","THR":"T","VAL":"V","TRP":"W","TYR":"Y"}
+
+if RUN_CALVADOS:
+    PATCH = {}
+    for ab in CONS.항체.unique():
+        _m = sorted(glob.glob(f"{REFD(ab)}/ref_m[0-9].pdb")) or [f"{REFD(ab)}/ref.pdb"]
+        _m = [x for x in _m if os.path.isfile(x)]
+        if not _m:
+            print(f"  {ab:<22} 기준 구조 없음 — 건너뜀"); continue
+        pt, why = sticky_patch(_m[0])
+        if why:
+            print(f"  {ab:<22} {why}"); continue
+        PATCH[ab] = pt
+        print(f"  {ab:<22} 끈끈한 패치 " +
+              " · ".join(f"{c}:{len(v)}" for c, v in pt.items()))
+    if PATCH:
+        _n = [sum(len(v) for v in p.values()) for p in PATCH.values()]
+        print(f"\n  패치 크기 {min(_n)}~{max(_n)} 잔기 · 항체마다 다르다.")
+        print("  ★ 이 차이가 '같은 링커인데 도메인마다 다르다' 의 한 경로다 —")
+        print("    링커가 가릴 면의 크기와 위치가 애초에 다르다.")
+else:
+    PATCH = {}
+''')
+
+code(r'''
+# ── 10절-C · 관측량 — 궤적이 있으면 재고, 없으면 무엇이 필요한지 말한다 ────
+# 분석 핵심은 tools/fvcalv.py 와 **같은 코드**다 (자체 시험 20/20 통과).
+KB_CALV = 0.008314462618      # kJ/mol/K
+
+def b22_from_pmf(r, w, T=None, r_core=None):
+    """PMF → 2차 비리얼 계수.  B22 = −2π∫[exp(−W/kT)−1] r² dr   (nm³)
+
+    ★ 꼬리에서 0 으로 맞춘다 — 안 하면 상수 치우침이 적분을 통째로 끌고 간다.
+    ★ r[0]~core 구간은 격자 위에서 이미 f=−1 로 적분된다. 거기에 해석항을 또
+      더하면 **두 배가 된다** (자체 시험이 딱딱한 구에서 정확히 그걸 잡았다).
+    """
+    T = CALV_TEMP if T is None else T
+    r = np.asarray(r, float); w = np.asarray(w, float)
+    if r.shape != w.shape or r.ndim != 1 or len(r) < 3:
+        raise ValueError("r 과 w 는 길이 3 이상의 같은 1차원 배열이어야 한다")
+    o = np.argsort(r); r, w = r[o], w[o]
+    if np.any(r <= 0): raise ValueError("r 은 양수여야 한다")
+    w = w - float(np.median(w[-max(1, len(r)//20):]))
+    core = float(r[0]) if r_core is None else float(r_core)
+    f = np.where(r < core, -1.0, np.exp(-w/(KB_CALV*T)) - 1.0)
+    tz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+    return float(-2.0*np.pi*(tz(f*r**2, r) - (r[0]**3)/3.0))
+
+def b22_reduced(b22_nm3, sigma):
+    """딱딱한 구 대비. B2_HS = (2π/3)σ³ (σ = 접촉 지름).
+    링커가 길면 σ 가 커져 B22 도 커지므로 **크기 효과를 빼고** 볼 때 쓴다."""
+    hs = (2.0*np.pi/3.0)*float(sigma)**3
+    return float(b22_nm3/hs) if hs > 0 else np.nan
+
+def sticky_exposure(pos, patch_idx, linker_idx, cut=0.8):
+    """패치 비드 중 링커에 **안 가려진** 비율 (프레임별)."""
+    pos = np.asarray(pos, float)
+    if pos.ndim != 3 or pos.shape[2] != 3: raise ValueError("pos 는 (프레임,비드,3)")
+    patch_idx = np.asarray(patch_idx, int); linker_idx = np.asarray(linker_idx, int)
+    if len(patch_idx) == 0: raise ValueError("패치가 비었다")
+    if len(linker_idx) == 0: return np.ones(len(pos))
+    out = np.empty(len(pos))
+    for t, p in enumerate(pos):
+        d = np.linalg.norm(p[patch_idx][:, None, :] - p[linker_idx][None, :, :], axis=-1)
+        out[t] = float((d.min(axis=1) > cut).mean())
+    return out
+
+def linker_sweep(pos, linker_idx):
+    """링커가 훑는 부피 대리값 — 위치 공분산 행렬식^(1/2) 의 프레임 평균.
+    '자유분방함' 을 크기가 아니라 **퍼짐**으로 잰다 (신장도는 길이의 변장이었다)."""
+    pos = np.asarray(pos, float); linker_idx = np.asarray(linker_idx, int)
+    if len(linker_idx) < 3: return np.nan
+    return float(np.mean([np.sqrt(max(float(np.linalg.det(
+        np.cov((p[linker_idx]-p[linker_idx].mean(0)).T))), 0.0)) for p in pos]))
+
+def within_share(values, groups):
+    """항체내몫 — **라벨 검정보다 먼저** 본다. 0.3 미만이면 링커가 아니라 항체를 잰다."""
+    v = np.asarray(values, float); g = np.asarray(groups)
+    m = np.isfinite(v); v, g = v[m], g[m]
+    if len(v) < 4 or len(np.unique(g)) < 2: return np.nan
+    mu = [v[g == k].mean() for k in np.unique(g)]
+    wi = np.concatenate([v[g == k] - v[g == k].mean() for k in np.unique(g)])
+    sb, sw = float(np.std(mu, ddof=1)), float(np.std(wi, ddof=1))
+    return float(sw**2/(sb**2 + sw**2)) if (sb**2 + sw**2) > 1e-30 else np.nan
+
+print("10절 관측량 함수 준비 완료 (fvcalv.py 와 같은 코드 · 자체 시험 20/20)")
+''')
+
+code(r'''
+# ── 10절-D · 결과 수집과 **y 를 안 보는 판정** ────────────────────────────
+CALV_CSV = f"{OUT}/calvados.csv"
+CALV = pd.read_csv(CALV_CSV) if (REUSE_CSV and os.path.isfile(CALV_CSV)) else pd.DataFrame()
+if not RUN_CALVADOS and not len(CALV):
+    print("10절 결과 없음 — RUN_CALVADOS 를 켜고 돌려라.")
+    print("\n무엇이 나오게 되나:")
+    print("  구성체마다  B22(nm³) · B22_무차원 · 끈끈한면_노출 · 링커_훑는부피 · 분자간접촉")
+    print("  전부 **라벨이 필요 없다** → 합성 패널 32개에 그대로 돌아간다.")
+elif len(CALV):
+    display(CALV)
+    _need = [c for c in ("항체", "링커") if c not in CALV.columns]
+    assert not _need, f"calvados.csv 에 {_need} 열이 없다"
+    OBSV = [c for c in ("B22", "B22_무차원", "끈끈한면_노출", "링커_훑는부피",
+                        "분자간접촉") if c in CALV.columns]
+    print("="*76)
+    print("★ 10절 판정 ① — 라벨을 보기 **전에**: 이게 링커를 재나 항체를 재나")
+    print("="*76)
+    _v = []
+    for c in OBSV:
+        sh_ = within_share(CALV[c].values, CALV.항체.values)
+        _v.append(dict(관측량=c, 항체내몫=round(sh_, 2),
+                       판정=("★ 항체를 재고 있다 — 여기서 접어라" if sh_ < 0.3 else
+                             "치우쳐 있다" if sh_ < 0.5 else "쓸 만하다")))
+    VC = pd.DataFrame(_v); display(VC)
+    print("  각도 특징들이 0.20~0.29 여서 실패했다. 그 판정에는 라벨이 필요 없었고,")
+    print("  지금도 필요 없다. 0.3 미만이면 **라벨 검정까지 가지 마라.**")
+
+    _live = [r.관측량 for r in VC.itertuples() if r.항체내몫 >= 0.3]
+    if not _live:
+        print("\n  ★★ 살아남은 관측량이 없다. CALVADOS 도 항체를 재고 있다.")
+        print("     링커 축이 아니라는 뜻이고, 표본을 늘려도 안 바뀐다.")
+    elif "ML_RESULT" not in dir() or not HC:
+        print(f"\n  살아남은 관측량: {_live} — 라벨 검정은 7절을 먼저 돌려라.")
+    else:
+        print("="*76)
+        print(f"★ 10절 판정 ② — 라벨 검정 (탐색, Holm 보정). 살아남은 것만: {_live}")
+        print("="*76)
+        _M = USE.merge(CALV, on=["항체", "링커"], how="left", validate="one_to_one")
+        _Y = make_target(_M, HC, block=GROUP, higher_is_worse=HIGHER_IS_WORSE).values
+        _D = Design(_M, block=GROUP)
+        _rs = []
+        for c in _live:
+            v = pd.to_numeric(_M[c], errors="coerce").values
+            if np.isfinite(v).sum() < len(_M)-1 or np.nanstd(v) < 1e-12: continue
+            r = perm_test_signal(v, _Y, _D, seed=21+len(_rs))
+            _rs.append(dict(관측량=c, 일치=r["일치"], 일치도=round(r["일치도"], 3),
+                            순열p=round(r["순열p"], 4)))
+        if _rs:
+            T10 = pd.DataFrame(_rs)
+            T10["Holm_p"] = holm(T10.순열p.values).round(4)
+            display(T10)
+            print("  ※ 10절은 **탐색**이다. 사전 등록된 확증 검정은 7절 ① 하나뿐이다.")
+            print("     여기서 유의해도 '발견' 이지 '확증' 이 아니다 — 다시 재서 확인해야 한다.")
+        print("\n  ※ 그리고 이것으로 **도메인 교환(diabody) 가설은 검정되지 않는다.**")
+        print("    CALVADOS 는 비특이적 회합만 본다. 특이적 계면은 못 만든다.")
 ''')
 
 # ═════════════════════════════════════════════════════════════════════════════

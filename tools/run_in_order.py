@@ -273,6 +273,7 @@ def run(path, stop_on_error=True, over=None, empty=False):
         g["venv_metrics"] = lambda *a, **k: f"{tmp}/venv"
         g["venv_be"] = lambda *a, **k: f"{tmp}/venv"
         g["N_SEED_REP"] = 0
+        g["RUN_CALVADOS"] = False      # 설치·GPU 가 없다. 끈 경로만 탄다.
         g.update(over)                # ★ 호출자가 준 스위치가 마지막에 이긴다
 
     g = base_env(drive)

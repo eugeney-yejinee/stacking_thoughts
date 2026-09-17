@@ -36,6 +36,7 @@ SLOW = [
     ("추론 핵심 (fvml)", ["test_fvml.py"], True),
     ("특징 추출 (fvfeat)", ["test_fvfeat.py"], True),
     ("계면 상호작용 (fvinterx)", ["test_fvinterx.py"], True),
+    ("회합 관측량 (fvcalv)", ["test_fvcalv.py"], True),
     ("분석 셀 실행 (세 세계)", ["test_notebook.py"], True),
 ]
 
