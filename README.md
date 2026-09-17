@@ -788,6 +788,42 @@ openmm.OpenMMException: There is no registered Platform called "CUDA"
 고르고, 가속이 안 잡히면 `getPluginLoadFailures()` 로 **왜 안 잡혔는지**까지 찍는다.
 CG 계는 492 입자라 작으므로 CPU 로도 돌릴 만하다 — 건당 소요 시간을 코드가 찍는다.
 
+### 세 번째 실행 — `getNumPlatforms()` 가 `_Any` 를 돌려줬다
+
+```
+TypeError: '_Any' object cannot be interpreted as an integer
+  → range(_om.Platform.getNumPlatforms())
+```
+
+Colab 의 OpenMM 빌드에서 그 SWIG 래퍼가 `int` 가 아니라 `_Any` 를 돌려준다.
+**이 저장소 환경에서는 정상적으로 `int` 가 나온다** — 버전 차이라 여기서 못 잡았다.
+
+고침: 그 함수를 안 쓴다. **이름을 하나씩 직접 물어본다.**
+```python
+for nm in ("CUDA", "HIP", "OpenCL", "CPU", "Reference"):
+    try: Platform.getPlatformByName(nm); names.append(nm)
+    except Exception: pass
+```
+버전에 무관하고, 이 환경에서 `['CPU', 'Reference']` 로 확인했다.
+
+### ★ 사전점검 — 이 패턴을 끊는 장치
+
+한 줄 오류로 실행을 통째로 날린 것이 **세 번**이다 (폴리알라닌 PDB · 없는 CUDA
+플랫폼 · `getNumPlatforms` 의 `_Any`). 저장소 환경에서 CALVADOS 를 못 돌리니
+같은 일이 반복될 수 있다.
+
+그래서 본 실행 전에 **2,000 스텝짜리를 먼저 한 번** 돌린다 (`CALV_PREFLIGHT`).
+
+```
+★ 사전점검 — 2,000 스텝만 먼저 돌려 본다
+  ✔ 통과 — 2,000 스텝 3.2초 · B22 47.1 nm³ (의미 없는 값, 배관 확인용)
+  → 본 실행 1,000,000 스텝이면 건당 약 26.7분
+     28구성체 × 6조합 = 168건 → 약 74.8시간
+```
+
+실패하면 **본 실행을 아예 건너뛰고** 전체 출력을 찍는다 — 몇 초에 끝난다.
+덤으로 **소요 시간을 실측해서** 알려주므로 `CALV_MAX_RUNS` 를 근거 있게 정할 수 있다.
+
 ### 첫 실행이 6/6 실패한 이유 셋 — 전부 고쳤다
 
 1. **폴리알라닌.** CALVADOS 는 서열을 FASTA 가 아니라 **PDB 에서** 읽는다

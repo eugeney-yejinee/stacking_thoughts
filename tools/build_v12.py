@@ -231,6 +231,9 @@ CALV_RIGID_FV = True
 CALV_BOX_NM   = 30.0  # 상자 한 변(nm). 두 사슬이 대부분 떨어져 있어야 g(r) 꼬리가 1 이다
 CALV_NSAVE    = 1000  # 저장 간격(스텝)
 CALV_NFRAMES  = 1000  # 저장 프레임 수 → steps = NSAVE × NFRAMES
+# ★ 본 실행 전에 2,000 스텝짜리를 먼저 돌려 배관을 확인하고 소요 시간을 잰다.
+#   건당 몇 분~수십 분이라 설정이 한 줄만 틀려도 실행을 통째로 날린다.
+CALV_PREFLIGHT = True
 CALV_PATCH_Q = 0.25   # '끈끈한 패치' = 소수성 상위 25% 표면 잔기
 # ★ 어떤 앙상블 구조를 강체로 넣을까 — 이게 10절에서 제일 중요한 선택이다.
 #   CALVADOS 3 은 접힌 부분을 **입력 구조로 구속**하므로, VH+VL 을 통째로 강체로
@@ -4817,12 +4820,22 @@ if RUN_CALVADOS and HAVE_CALV and CONF and RES_CSV:
     #     openmm.OpenMMException: There is no registered Platform called "CUDA"
     #   (시스템 구성은 완벽했고 이 한 줄에서만 죽었다.)
     import openmm as _om
-    _names = [_om.Platform.getPlatform(i).getName()
-              for i in range(_om.Platform.getNumPlatforms())]
-    PLAT = next((x for x in ("CUDA", "HIP", "OpenCL", "CPU", "Reference")
-                 if x in _names), "Reference")
+    # ★ getNumPlatforms() 를 쓰면 안 된다 — 어떤 OpenMM 빌드에서는 SWIG 래퍼가
+    #   int 가 아니라 `_Any` 를 돌려줘서 range() 가 터진다 (실측에서 그랬다:
+    #   TypeError: '_Any' object cannot be interpreted as an integer).
+    #   **이름을 하나씩 직접 물어보면** 버전에 무관하다.
+    _names = []
+    for _nm in ("CUDA", "HIP", "OpenCL", "CPU", "Reference"):
+        try:
+            _om.Platform.getPlatformByName(_nm); _names.append(_nm)
+        except Exception:
+            pass
+    PLAT = _names[0] if _names else "Reference"
     print(f"OpenMM 등록 플랫폼: {_names} → **{PLAT}** 를 쓴다")
-    _fails = list(_om.Platform.getPluginLoadFailures())
+    try:
+        _fails = list(_om.Platform.getPluginLoadFailures())
+    except Exception:
+        _fails = []
     if PLAT in ("CPU", "Reference") and _fails:
         print(f"  ※ 가속 플러그인이 {len(_fails)}건 적재 실패했다. 첫 줄:")
         print(f"    {str(_fails[0])[:150]}")
@@ -4831,6 +4844,44 @@ if RUN_CALVADOS and HAVE_CALV and CONF and RES_CSV:
     os.makedirs(f"{OUT}/calvados", exist_ok=True)
     _items = [(k, v) for k, v in CONF.items()
               if CALV_ONLY is None or k == tuple(CALV_ONLY)]
+
+    # ── ★ 사전점검 — **짧게 한 번 돌려 본다** ────────────────────────────────
+    #   본 실행은 건당 몇 분~수십 분이다. 설정이 한 줄만 틀려도 전부 날린다.
+    #   그래서 2,000 스텝짜리를 먼저 돌려 문제를 **한꺼번에** 드러낸다.
+    #   (이 절에서 한 줄 오류로 실행을 통째로 날린 적이 세 번 있었다:
+    #    폴리알라닌 PDB · 없는 CUDA 플랫폼 · getNumPlatforms 의 _Any.)
+    if _items and CALV_PREFLIGHT:
+        (_ab0, _lk0), _sel0 = _items[0]
+        _r00 = CONS[(CONS.항체 == _ab0) & (CONS.링커 == _lk0)].iloc[0]
+        _p0 = (_sel0.get("닫힘") or [{}])[0].get("경로")
+        print("="*76); print("★ 사전점검 — 2,000 스텝만 먼저 돌려 본다"); print("="*76)
+        if not _p0:
+            print("  ★ 닫힘 구조가 없다 — 10절-A2 를 확인하라.")
+        else:
+            _w0 = "/content/_calv_pre"
+            _save, _frames = CALV_NSAVE, CALV_NFRAMES
+            try:
+                shutil.rmtree(_w0, ignore_errors=True)
+                CALV_NSAVE, CALV_NFRAMES = 200, 10      # 2,000 스텝
+                _t = time.time()
+                _b = run_calvados_dimer(_w0, [("A", "닫힘", _p0, _r00)],
+                                        RES_CSV, platform=PLAT)
+                _dt = time.time() - _t
+                print(f"  ✔ 통과 — 2,000 스텝 {_dt:.1f}초 · B22 {_b:.1f} nm³ (의미 없는 값, 배관 확인용)")
+                _est = _dt * (_save*_frames/2000) / 60
+                print(f"  → 본 실행 {_save*_frames:,} 스텝이면 건당 약 **{_est:.1f}분**")
+                print(f"     {len(_items)}구성체 × {len(CALV_PAIRS)}조합 = "
+                      f"{len(_items)*len(CALV_PAIRS)}건 → 약 {_est*len(_items)*len(CALV_PAIRS)/60:.1f}시간")
+                print("     CALV_MAX_RUNS 를 이 숫자 보고 정하라.")
+            except Exception as e:
+                print(f"  ★★ 사전점검 실패 — 본 실행은 건너뛴다. 위 전체 출력을 보라.")
+                print(f"     {type(e).__name__}: {str(e)[:400]}")
+                _items = []
+            finally:
+                CALV_NSAVE, CALV_NFRAMES = _save, _frames
+                shutil.rmtree(_w0, ignore_errors=True)
+        print()
+
     print(f"플랫폼 {PLAT} · 상자 {CALV_BOX_NM} nm · {CALV_NSAVE*CALV_NFRAMES:,} 스텝")
     print(f"구성체 {len(_items)} × 조합 {len(CALV_PAIRS)} × {CALV_N_PER} = "
           f"{len(_items)*len(CALV_PAIRS)*CALV_N_PER}건 중 "

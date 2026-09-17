@@ -311,6 +311,7 @@ def run(plant_composition=True, label="", iface_gamma=0.0):
     g["CALV_MAX_RUNS"] = 6
     g["CALV_PAIRS"] = [("닫힘","닫힘"),("닫힘","열림"),("열림","열림")]
     g["CALV_N_PER"] = 1
+    g["CALV_PREFLIGHT"] = True
     g["CALV_ONLY"] = None
     g["CALV_TEMP"] = 298.15
 
