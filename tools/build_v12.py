@@ -1650,8 +1650,12 @@ if _todo:
         if R0C[ab] is None: print(f"  ★ 기준점 ABangle 실패: {ab}")
         return R0C[ab]
 
-    _meta = lambda r: {c: r[c] for c in CONS.columns
-                       if HC and c == HC and pd.notna(r[c])}
+    # ★ 실측 열을 **전부** 싣는다. HC(확증 열) 하나만 실으면 수율·단량체가 여기서
+    #   사라지고, 6절 이후로는 존재 자체를 알 수 없게 된다. README 의 고침 #5 가
+    #   바로 그 사고였는데 같은 일이 이 줄에서 다시 일어날 수 있었다.
+    #   수율은 HMW 와 **다른 실패 모드**다 (실측에서 항체 안 rho 가 0.00·−0.40·
+    #   +0.87·−0.80·0.00 로 관계가 없다). 버리면 안 된다.
+    _meta = lambda r: {c: r[c] for c in OBS if c in CONS.columns and pd.notna(r[c])}
     jobs, _t0 = [], time.time()
     for _, r in CONS.iterrows():
         if (r.항체, r.링커) not in set(_todo): continue
@@ -1893,8 +1897,9 @@ def build_features(frames, geom, gen=GEN, pair_dc=PAIR_DC):
         #   기하가 섞여 들어온다 — 오류 없이 조용히 틀린 값이 된다.
         Gf = Gf.merge(geom.drop(columns=["링커"], errors="ignore"),
                       on=["항체", "태그"], how="left", validate="many_to_one")
-    meta = [c for c in ("블록", "항체", "배향", "링커", "길이", "합성", "조성",
-                        "설계길이") if c in Gf.columns] + ([HC] if HC else [])
+    meta = ([c for c in ("블록", "항체", "배향", "링커", "길이", "합성", "조성",
+                         "설계길이") if c in Gf.columns]
+            + [c for c in OBS if c in Gf.columns])      # ★ 실측 열 전부 (HC 만이 아니다)
     rows = []
     for (ab, lk), g in Gf.groupby(["항체", "링커"], sort=False):
         d = {k: g[k].iloc[0] for k in meta}
@@ -2143,6 +2148,62 @@ if _dead:
     print(f"  ★★ 항체내몫 < 0.3: {_dead}")
     print("     이 특징들은 이 설계에서 링커 신호를 **원리적으로** 못 나른다.")
     print("     p 가 크게 나와도 '효과 없음' 이 아니라 '정보가 없음' 이다.")
+
+# ── ★ 수율 축 — 상관이 아니라 **파국 탐지**다 ──────────────────────────────
+#   실측에서 나온 구조가 이렇다 (그래서 회귀로 물으면 안 된다):
+#     · 항체 사이 수율 중앙값은 60배 차이 난다 (4 ~ 240 mg/L)
+#     · 항체 **안** 링커 간 배수는 1.1 · 1.3 · 1.4 · 1.6 배 — 거의 안 변한다
+#     · 그런데 딱 하나, 블록3 Whitlow218 이 **49배** 무너졌다 (222 → 4.7 mg/L)
+#   즉 링커가 수율에 주는 효과는 **연속적인 축이 아니라 사실상 이진**이다:
+#   멀쩡하거나(±60%), 아예 안 나오거나. 상관계수는 이런 구조를 못 본다 —
+#   순위로 보면 파국 1건이 그냥 '제일 낮은 값' 한 칸일 뿐이다.
+#   그래서 회귀 대신 **형제 대비 배수**로 보고, 임계 아래를 이름으로 지목한다.
+#   ※ 파국은 링커 고유 성질이 아니다. 같은 Whitlow218 이 다른 세 항체에서는
+#     형제 중앙값의 0.75 · 1.07 · 1.13 배로 멀쩡했다. **그 도메인과만** 안 맞는다.
+#     이것이 '링커 × 도메인 상호작용' 의 가장 날것 그대로의 증거다.
+_yc = [c for c in OBS if ("수율" in str(c) or "생산" in str(c)
+                          or "titer" in str(c).lower() or "yield" in str(c).lower())]
+if _yc and _yc[0] in FEAT.columns:
+    YC = _yc[0]
+    print("="*76); print(f"★ 수율 축 — 파국 탐지 ({YC})"); print("="*76)
+    print("  링커가 수율에 주는 효과는 연속적이지 않고 **이진**일 수 있다 —")
+    print("  멀쩡하거나, 아예 안 나오거나. 그래서 상관이 아니라 형제 대비 배수로 본다.\n")
+    _Y = FEAT[(~FEAT.합성) & FEAT[YC].notna()][[GROUP, "링커", "길이", YC]].copy()
+    if len(_Y):
+        _med = _Y.groupby(GROUP)[YC].transform("median")
+        _Y["형제중앙"] = _med.round(1)
+        _Y["형제대비"] = (_Y[YC]/_med).round(3)
+        CATASTROPHE_CUT = 0.25          # 형제 중앙값의 1/4 미만이면 파국
+        _Y["파국"] = _Y.형제대비 < CATASTROPHE_CUT
+        _sp = _Y.groupby(GROUP)[YC].agg(["min", "max", "median"])
+        _sp["안쪽배수"] = (_sp["max"]/_sp["min"]).round(1)
+        print("  항체별 수율 규모와 항체 **안** 링커 간 배수")
+        display(_sp.round(1))
+        print(f"  항체 간 중앙값 배수 = "
+              f"{_sp['median'].max()/max(_sp['median'].min(), 1e-9):.0f}배 "
+              f"· 항체 안 최대 배수 = {_sp['안쪽배수'].max():.1f}배")
+        CATA = _Y[_Y.파국]
+        if len(CATA):
+            print(f"\n  ★★ 파국 {len(CATA)}건 — 형제 중앙값의 {CATASTROPHE_CUT:.0%} 미만")
+            display(CATA[[GROUP, "링커", "길이", YC, "형제중앙", "형제대비"]])
+            for _lk in CATA.링커.unique():
+                _o = _Y[(_Y.링커 == _lk) & (~_Y.파국)]
+                print(f"     '{_lk}' 는 다른 항체 {len(_o)}개에서는 형제 대비 "
+                      f"{sorted(_o.형제대비.round(2))} 로 멀쩡하다.")
+                print(f"     → 링커 고유 성질이 아니라 **그 도메인과의 조합**이 문제다.")
+            print("     ※ 파국은 앙상블 특징으로 예측되지 않았다 (실측 1건에서 전 특징 |z|<1.1).")
+            print("       실패 지점이 **접힌 상태의 형태 분포 밖**이라는 뜻이다 —")
+            print("       공동번역 폴딩·ER 품질관리·분비 쪽을 봐야 한다. BioEmu 는 거길 안 본다.")
+            print("     ※ 먼저 확인할 것: 이 구성체를 **다시 만들어 봤는가?** 50배짜리")
+            print("       한 점은 생물학일 수도 있고 그냥 실패한 트랜스펙션일 수도 있다.")
+        else:
+            print(f"\n  파국 없음 — 모든 구성체가 형제 중앙값의 {CATASTROPHE_CUT:.0%} 이상이다.")
+        _thin = _sp[_sp["median"] < 0.2*_sp["median"].max()]
+        if len(_thin):
+            print(f"\n  ★ 수율이 전체 최고의 20% 미만인 항체: {list(_thin.index)}")
+            print("     이 항체들의 물성값은 **극소량에서 잰 값**이다. 다른 항체와")
+            print("     나란히 놓고 읽을 때 그 사실을 같이 말해야 한다.")
+        YIELD_RESULT = dict(표=_Y, 파국=CATA, 규모=_sp, 임계=CATASTROPHE_CUT)
 
 print("="*76); print("★ 특징 잡음 원장 — 특징 하나가 150 프레임의 통계량이다"); print("="*76)
 print("  관측 상관 ≈ 참 상관 × 감쇠배율.  '상관이 없다' 와 '특징이 시끄럽다' 를 여기서 가른다.")

@@ -94,6 +94,13 @@ def write_excel(path):
                 "Domain_2": L,
                 "HMW(%)": round(4 + 2*b + 0.6*(Ln - 15) + rng.normal(0, .5), 2),
                 "Monomer(%)": round(96 - 2*b - 0.6*(Ln - 15), 2),
+                # ★ 수율 열. 항체 사이는 크게(60배), 항체 안은 작게(±30%) —
+                #   실측의 구조 그대로다. 그리고 블록 3 의 두 번째 링커에
+                #   **파국을 심는다** (형제의 2%). 6절-B 파국 탐지가 이걸 잡아야 한다.
+                #   안 심으면 그 분기가 한 번도 안 돌아서 깨져도 모른다.
+                "Protein A Purification 생산량(mg/L)": (
+                    round(4.7, 2) if (b == 3 and i == 1)
+                    else round(5.0 * (3.2 ** b) * (1 + 0.1*i), 1)),
             })
     pd.DataFrame(rows).to_excel(path, index=False)
 
@@ -166,8 +173,13 @@ def populate(OUT, CONS):
                        길이=int(r.길이), 합성=bool(r.합성),
                        조성=r.get("조성", np.nan), 설계길이=r.get("설계길이", np.nan),
                        생성기="BioEmu", 태그=tag, **dd)
+            # ★ 실측 열을 **전부** 싣는다. 노트북의 OBS_KEYS 와 같은 규칙이다 —
+            #   여기서 수율을 빼면 6절-B 파국 탐지가 한 번도 안 돌아서,
+            #   그 분기가 깨져도 시험이 통과해 버린다 (실제로 그랬다).
             for c in CONS.columns:
-                if "hmw" in str(c).lower() or "monomer" in str(c).lower():
+                if any(k in str(c).lower() or k in str(c) for k in
+                       ("hmw", "monomer", "단량체", "purity", "순도", "수율",
+                        "생산", "titer", "sec", "quantific", "supernatant")):
                     row[c] = r[c]
             frames.append(row)
             geom.append(dict(항체=r.항체, 링커=r.링커, 태그=tag,
