@@ -25,7 +25,7 @@ try:
 except Exception as e:                                    # pragma: no cover
     print(f"★ mdtraj 가 없다 ({e}) — pip install mdtraj");  sys.exit(1)
 
-from fvobs import (AA3to1, BLACK_MOULD, MAXSASA, acid_is_charged, base_is_charged,
+from fvobs import (AA3to1, BLACK_MOULD, HYD_CUT, MAXSASA, acid_is_charged, base_is_charged,
                    block_drift, chain_dims, find_span, interface_contacts,
                    largest_patch, linker_shield, rel_exposure, salt_bridges, sap,
                    traj_sequence, within_share)
@@ -127,6 +127,24 @@ check("흩어지면 성분이 1개", len(mem_s) == 1, f"{mem_s}")
 check("뭉친 쪽 면적이 더 크다", a_c > a_s, f"{a_c:.2f} vs {a_s:.2f} nm²")
 check("친수성만 있으면 패치 없음",
       largest_patch(build([("ASP", bb(i * 0.5)) for i in range(4)]))[0] == 0.0)
+# ★★ GLY 가 소수성으로 새면 (G4S)n 링커가 곧 '최대 소수성 패치' 가 되고,
+#    링커가 자기를 덮으니 linker_shield 가 0.0 이 된다 — 주 관측값이 통째로 죽는다.
+g4s = build([("GLY", bb(0.0)), ("GLY", bb(0.5)), ("GLY", bb(1.0)), ("SER", bb(1.5))])
+check("★ GLY 는 소수성이 아니다 (G4S 링커가 패치가 되면 안 된다)",
+      largest_patch(g4s)[0] == 0.0,
+      f"패치 {largest_patch(g4s)[0]:.2f} nm² · 구성원 {largest_patch(g4s)[1]}")
+check("Black-Mould 에서 GLY 는 문턱 아래", (BLACK_MOULD["GLY"] - 0.5) <= HYD_CUT,
+      f"{BLACK_MOULD['GLY']-0.5:+.4f} ≤ {HYD_CUT}")
+check("LEU/PHE 는 문턱 위",
+      (BLACK_MOULD["LEU"] - 0.5) > HYD_CUT and (BLACK_MOULD["PHE"] - 0.5) > HYD_CUT)
+# ★ 성분을 개수가 아니라 **면적**으로 골라야 한다.
+#   넉넉히 떨어진 2개(각자 1.74 nm² → 합 3.47)  vs  빽빽한 3개(합 3.20).
+#   개수로 고르면 3개짜리를, 면적으로 고르면 2개짜리를 집는다.
+mix = build([("LEU", bb(0.0)), ("LEU", bb(0.75)),
+             ("LEU", bb(9.0)), ("LEU", bb(9.30)), ("LEU", bb(9.60))])
+a_m, mem_m = largest_patch(mix, link_nm=0.8)
+check("★ 개수가 아니라 면적이 큰 성분을 고른다", mem_m == [0, 1],
+      f"고른 것 {mem_m} · 면적 {a_m:.2f} nm² (개수로 고르면 [2,3,4] 가 된다)")
 
 # ── 6. 링커 가림 ───────────────────────────────────────────────────────────
 print("\n[6] 링커 가림 — 손으로 셀 수 있는 배치")
@@ -151,6 +169,13 @@ close = build([("ASP", {**bb(0.0), "OD1": (0.0, 0.3, 0.0), "OD2": (0.05, 0.3, 0.
                ("LYS", {**bb(1.0), "NZ": (0.3, 0.3, 0.0)})])     # OD1–NZ = 0.30 nm
 n_sb, pairs = salt_bridges(close, cut_nm=0.4)
 check("가까우면 1개 잡는다", n_sb == 1, f"{pairs}")
+# ★ 카복실기 2개 × 구아니디늄 3개 = 원자쌍 6개. 원자쌍마다 문턱을 걸면 놓친다.
+#   잔기 쌍으로 묶어 최대 점유율을 써야 한다.
+multi = build([("GLU", {**bb(0.0), "OE1": (0.0, 0.3, 0.0), "OE2": (0.05, 0.3, 0.0)}),
+               ("ARG", {**bb(1.0), "NH1": (0.30, 0.3, 0.0), "NH2": (0.34, 0.3, 0.0),
+                        "NE": (0.38, 0.3, 0.0)})])
+check("★ 여러 원자쌍이 한 염다리로 묶인다", salt_bridges(multi, cut_nm=0.4)[0] == 1,
+      f"{salt_bridges(multi, cut_nm=0.4)[1]}")
 farsb = build([("ASP", {**bb(0.0), "OD1": (0.0, 0.3, 0.0)}),
                ("LYS", {**bb(1.0), "NZ": (3.0, 0.3, 0.0)})])
 check("멀면 0개", salt_bridges(farsb, cut_nm=0.4)[0] == 0)

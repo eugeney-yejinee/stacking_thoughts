@@ -25,8 +25,8 @@ import numpy as np
 MAXSASA = {
     "ALA": 1.290, "ARG": 2.740, "ASN": 1.945, "ASP": 1.930, "CYS": 1.670,
     "GLN": 2.250, "GLU": 2.230, "GLY": 1.040, "HIS": 2.240, "ILE": 1.970,
-    "LEU": 2.010, "LYS": 2.360, "MET": 2.240, "PHE": 2.280, "PRO": 1.590,
-    "SER": 1.550, "THR": 1.720, "TRP": 2.590, "TYR": 2.550, "VAL": 1.740,
+    "LEU": 2.010, "LYS": 2.360, "MET": 2.240, "PHE": 2.400, "PRO": 1.590,
+    "SER": 1.550, "THR": 1.720, "TRP": 2.850, "TYR": 2.630, "VAL": 1.740,
 }
 # CHARMM 의 양성자화 변종 이름도 같은 잔기로 취급한다 (pH 3 에서 나온다)
 for _a, _b in (("ASH", "ASP"), ("GLH", "GLU"), ("HIP", "HIS"), ("HSP", "HIS"),
@@ -44,6 +44,21 @@ BLACK_MOULD = {
 for _a, _b in (("ASH", "ASP"), ("GLH", "GLU"), ("HIP", "HIS"), ("HSP", "HIS"),
                ("HSD", "HIS"), ("HSE", "HIS"), ("LYN", "LYS"), ("CYX", "CYS")):
     BLACK_MOULD[_a] = BLACK_MOULD[_b]
+
+# ★ 소수성 판정 문턱. 맨 부호(h > 0)로 하면 **GLY 가 소수성이 된다** —
+#   Black-Mould 에서 Gly 는 0.501 이라 중심(0.5)을 빼면 +0.001 이다.
+#   (G4S)n 링커는 80% 가 Gly 라, 그러면 '최대 소수성 패치' 가 링커 자신이 되고
+#   링커가 자기를 덮으니 linker_shield 가 정확히 0.0 이 된다 — 주 관측값이 죽는다.
+#   Gly 는 곁사슬이 아예 없으니 명시적으로도 뺀다.
+HYD_CUT = 0.05
+NO_SIDECHAIN = {"GLY"}
+
+
+def hydrophobic_mask(names):
+    """소수성으로 셀 잔기. 문턱 + Gly 제외."""
+    return np.array([(BLACK_MOULD.get(n, 0.5) - 0.5) > HYD_CUT and n not in NO_SIDECHAIN
+                     for n in names], bool)
+
 
 ACID_NAMES = {"ASP", "GLU", "ASH", "GLH", "ASPP", "GLUP"}
 BASE_NAMES = {"LYS", "ARG", "HIS", "HIP", "HSP", "HSD", "HSE", "LYN"}
@@ -114,32 +129,44 @@ def _resnames(traj):
     return [r.name.upper() for r in traj.topology.residues]
 
 
-def rel_exposure(traj):
-    """잔기별 **상대 노출도** (0~1). 앙상블 평균. SAP 의 재료다.
+def residue_sasa(traj, n_sphere_points=320):
+    """(프레임, 잔기) SASA. **한 번만 계산해서 돌려쓴다.**
 
-    반환: (n잔기,) 배열. 최대면적을 모르는 잔기(리간드 등)는 NaN.
+    ★ 예전에는 sap·rel_exposure·largest_patch·measure 가 각자 불러서 궤적 하나에
+      shrake_rupley 를 다섯 번 돌렸다. 4,000원자에서 프레임당 0.3초라 실제 실행에서
+      분석에만 몇 시간이 갔다. 점 개수도 기본값보다 줄여 정확도는 유지하고 속도를 올린다.
     """
     import mdtraj as md
     if traj.n_frames == 0:
         raise ValueError("프레임이 0개다")
-    sasa = md.shrake_rupley(traj, mode="residue")        # (frame, res) nm²
-    per = sasa.mean(axis=0)
+    return md.shrake_rupley(traj, mode="residue", n_sphere_points=n_sphere_points)
+
+
+def rel_exposure(traj, sasa=None):
+    """잔기별 **상대 노출도** (0~1). 앙상블 평균. SAP 의 재료다.
+
+    반환: (n잔기,) 배열. 최대면적을 모르는 잔기(리간드 등)는 NaN.
+    """
+    sasa = residue_sasa(traj) if sasa is None else sasa
+    per = np.asarray(sasa).mean(axis=0)
     mx = np.array([MAXSASA.get(n, np.nan) for n in _resnames(traj)], float)
     with np.errstate(divide="ignore", invalid="ignore"):
         rel = per / mx
     return np.clip(rel, 0.0, 1.5)
 
 
-def sap(traj, radius_nm=0.5):
+def sap(traj, radius_nm=1.0, sasa=None):
     """Spatial Aggregation Propensity (Chennamsetty & Trout 2009).
 
         SAP(i) = Σ_{j: |CB_i − CB_j| < R}  ⟨SAA_j / SAA_j^max⟩ · h_j
 
     원논문은 원자 단위지만 여기서는 **잔기 단위**로 근사한다 (CB 기준).
-    이웃 반경 R 은 원논문의 5 Å 를 그대로 쓴다.
+    ★ 반경: 원논문은 **모든 원자**에 5 Å 구를 얹고 잔기 안에서 평균한다. 곁사슬 전체를
+      덮는 ~10~15개 구의 합집합이므로, CB 하나에 5 Å 를 얹으면 공간 평균이 거의
+      사라진다. 그래서 기본을 10 Å 로 둔다 (원논문도 IgG SAP 지도를 r=10 Å 로 그린다).
     반환: (n잔기,) SAP 값. 양수 = 노출된 소수성 = 응집 성향.
     """
-    rel = rel_exposure(traj)
+    rel = rel_exposure(traj, sasa)
     names = _resnames(traj)
     h = np.array([BLACK_MOULD.get(n, np.nan) - 0.5 for n in names], float)
     xyz = _cb_coords(traj)                                # (n잔기, 3) 평균 좌표
@@ -169,7 +196,7 @@ def _cb_coords(traj):
     return xyz
 
 
-def largest_patch(traj, rel_cut=0.25, link_nm=0.8):
+def largest_patch(traj, rel_cut=0.25, link_nm=0.8, sasa=None):
     """가장 큰 **연속** 소수성 노출 패치의 면적 (nm²).
 
     응집은 총 면적이 아니라 **하나로 이어진 패치**가 핵이 된다. 총량이 같아도
@@ -178,30 +205,32 @@ def largest_patch(traj, rel_cut=0.25, link_nm=0.8):
     노출도 rel_cut 이상이고 소수성이 양수인 잔기를 CB 거리 link_nm 로 이어
     가장 큰 연결 성분을 찾고, 그 성분의 SASA 합을 돌려준다.
     """
-    import mdtraj as md
-    rel = rel_exposure(traj)
+    sasa = residue_sasa(traj) if sasa is None else sasa
+    per = np.asarray(sasa).mean(axis=0)
+    rel = rel_exposure(traj, sasa)
     names = _resnames(traj)
-    h = np.array([BLACK_MOULD.get(n, np.nan) - 0.5 for n in names], float)
-    sel = np.where((rel > rel_cut) & (h > 0) & np.isfinite(rel))[0]
+    sel = np.where((rel > rel_cut) & hydrophobic_mask(names) & np.isfinite(rel))[0]
     if len(sel) == 0:
         return 0.0, []
     xyz = _cb_coords(traj)[sel]
     d = np.linalg.norm(xyz[:, None, :] - xyz[None, :, :], axis=-1)
     adj = d < float(link_nm)
-    seen, best = set(), []
-    for s in range(len(sel)):
-        if s in seen:
+    # ★ 성분을 **면적**으로 고른다. 예전에는 잔기 **개수**가 제일 많은 성분을 고르고
+    #   그 면적을 보고했다 — TRP 4개(6.45 nm²)보다 ALA 5개(더 작은 면적)를 이기게 된다.
+    seen, best, best_area = set(), [], -1.0
+    for s0 in range(len(sel)):
+        if s0 in seen:
             continue
-        stack, comp = [s], []
+        stack, comp = [s0], []
         while stack:
             u = stack.pop()
             if u in seen:
                 continue
             seen.add(u); comp.append(u)
             stack.extend(np.where(adj[u])[0].tolist())
-        if len(comp) > len(best):
-            best = comp
-    per = md.shrake_rupley(traj, mode="residue").mean(axis=0)
+        area = float(per[[int(sel[c]) for c in comp]].sum())
+        if area > best_area:
+            best, best_area = comp, area
     members = sorted(int(sel[c]) for c in best)
     return float(per[members].sum()), members
 
@@ -256,17 +285,20 @@ def salt_bridges(traj, cut_nm=0.4):
         d = np.linalg.norm(A[:, :, None, :] - B[:, None, :, :], axis=-1)
         occ += (d < float(cut_nm)).sum(axis=0)
     occ /= max(traj.n_frames, 1)
-    ai, bi = np.where(occ > 0.3)
-    seen = set()
-    for x, y in zip(ai, bi):
-        ra = top.atom(acid[x]).residue; rb = top.atom(base[y]).residue
-        k = (ra.index, rb.index)
-        if k in seen:
-            continue
-        seen.add(k)
-        pairs.append((f"{ra.name}{ra.resSeq}", f"{rb.name}{rb.resSeq}",
-                      round(float(occ[x, y]), 3)))
-    return len(seen), pairs
+    # ★ **잔기 쌍**으로 묶어 최대 점유율을 쓴다. 원자 쌍마다 문턱을 걸면, 카복실기 2개 ×
+    #   구아니디늄 3개 = 6쌍에 점유가 흩어져서 늘 붙어 있는 염다리도 놓친다.
+    ra_of = {i: top.atom(a).residue.index for i, a in enumerate(acid)}
+    rb_of = {j: top.atom(b).residue.index for j, b in enumerate(base)}
+    agg = {}
+    for x in range(len(acid)):
+        for y in range(len(base)):
+            k = (ra_of[x], rb_of[y])
+            agg[k] = max(agg.get(k, 0.0), float(occ[x, y]))
+    for (ia, ib), v in agg.items():
+        if v > 0.3:
+            pairs.append((f"{top.residue(ia).name}{top.residue(ia).resSeq}",
+                          f"{top.residue(ib).name}{top.residue(ib).resSeq}", round(v, 3)))
+    return len(pairs), pairs
 
 
 def interface_contacts(traj, res_a, res_b, cut_nm=0.45):

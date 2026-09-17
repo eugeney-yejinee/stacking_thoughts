@@ -203,10 +203,16 @@ def read_excel():
     for _, r in X.iterrows():
         seq = next((str(r[k]).strip().upper() for k in lc
                     if isinstance(r[k], str) and len(str(r[k]).strip()) >= 5), "")
-        rows.append(dict(링커=str(r[nm]).strip().rsplit("_", 1)[-1], 링커서열=seq,
+        full = str(r[nm]).strip()
+        rows.append(dict(이름=full, 링커=full.rsplit("_", 1)[-1],
+                         앞이름=full.rsplit("_", 1)[0], 링커서열=seq,
                          블록=re.sub(r"\.0$", "", str(r[blk])) if blk else "1",
                          HMW=pd.to_numeric(r[hm], errors="coerce") if hm else np.nan))
     d = pd.DataFrame(rows)
+    if not len(d):
+        # 첫 시트가 표지이거나 데이터가 2번 시트에 있으면 이 모양이 된다
+        say(f"  엑셀 {os.path.basename(c[-1])} 에 데이터 행이 없다 — 라벨 없이 간다")
+        return pd.DataFrame(columns=["이름", "링커", "앞이름", "링커서열", "HMW", "블록"])
     say(f"  엑셀     {os.path.basename(c[-1])} — 링커 {d.링커.nunique()}종"
         + (f" · HMW 열 '{hm}'" if hm else " · ★HMW 열 없음"))
     return d
@@ -235,11 +241,31 @@ def find_structures(lab):
         say("    경로가 다르면 환경변수로:  FVL_OUT=/실제/경로 python3 fvlinker_ph3md.py …")
         raise SystemExit(1)
 
-    seqmap = dict(zip(lab.링커, lab.링커서열)) if len(lab) else {}
-    hmwmap = dict(zip(lab.링커, lab.HMW)) if len(lab) else {}
+    # ★★ 링커 **이름만으로** 붙이면 같은 링커를 쓰는 항체끼리 라벨을 덮어쓴다.
+    #    (AB1_G4S 1.2 · AB2_G4S 9.9 → 둘 다 9.9 가 된다.) 이 설계는 같은 링커를
+    #    여러 항체에 쓰므로 y 가 대부분 오염된다. 블록으로 먼저 맞추고, 그래도 겹치면
+    #    **조용히 하나를 고르지 않고 크게 알린다.**
+    seqmap, hmwmap = {}, {}
+    if len(lab):
+        for _, r in lab.iterrows():
+            seqmap.setdefault((r.블록, r.링커), r.링커서열)
+            hmwmap.setdefault((r.블록, r.링커), r.HMW)
+            seqmap.setdefault(r.링커, r.링커서열)          # 블록을 못 맞출 때의 대비
+        from collections import Counter
+        dupe = [k for k, v in Counter(lab.링커).items() if v > 1]
+        if dupe:
+            say(f"  ★ 여러 항체가 같은 링커 이름을 쓴다: {dupe[:6]}")
+            say("    → 블록으로 맞춘다. 블록이 안 맞으면 그 구성체의 HMW 는 비워 둔다")
+            say("      (이름만으로 붙이면 항체끼리 y 를 덮어써서 검정이 통째로 망가진다).")
     for f in found:
-        f["링커서열"] = seqmap.get(f["링커"], "")
-        f["HMW"] = float(hmwmap.get(f["링커"], np.nan))
+        blk = f["항체"].rsplit("_B", 1)[-1] if "_B" in f["항체"] else None
+        f["링커서열"] = seqmap.get((blk, f["링커"]), seqmap.get(f["링커"], ""))
+        f["HMW"] = float(hmwmap.get((blk, f["링커"]), np.nan))
+    nlab = sum(1 for f in found if np.isfinite(f["HMW"]))
+    if len(lab):
+        say(f"  HMW 가 붙은 구성체 {nlab}/{len(found)}"
+            + ("" if nlab else "  ★★ 하나도 못 붙었다 — 항체 폴더 이름의 블록과"
+                              " 엑셀 Block 열이 안 맞는다"))
 
     # 항체 안에서 링커가 2종 이상인 것만 — 그게 검정 가능한 유일한 대조다
     from collections import Counter
@@ -252,7 +278,14 @@ def find_structures(lab):
     if noseq:
         say(f"  ★ 링커 서열을 못 찾은 구성체 {len(noseq)}개 — 링커 관측값은 NaN 이 된다:")
         say(f"    {noseq[:6]}")
-    return keep or found
+    if not keep:
+        say("  ★★ 링커를 2종 이상 가진 항체가 하나도 없다 — 이 실행으로는 검정을 못 한다.")
+        say("     항체내 대조가 없으면 관측값이 링커 효과인지 항체 효과인지 가를 수가 없다.")
+        say("     관측값만 모으고 싶으면 --allow-no-control 을 줘라.")
+        if "--allow-no-control" not in sys.argv:
+            raise SystemExit(1)
+        return found
+    return keep
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -270,9 +303,17 @@ def prepare(pdb_in, ph, ffpair, pad_nm=None, solvate=True):
       환경 민감도가 없다 — pH 3.0 은 거의 모든 Asp/Glu pKa 아래라 맞고,
       pH 4~5 였다면 틀렸을 것이다.
     """
+    import random
+
     from openmm import unit
     from openmm.app import (HBonds, Modeller, NoCutoff, PDBFile, PME, element)
     from pdbfixer import PDBFixer
+
+    # ★★ Modeller.addHydrogens 는 수소를 씨앗 없는 **전역 random** 으로 놓고,
+    #    addSolvent 는 이온 자리를 random.choice 로 고른다. 그래서 같은 PDB·같은 pH 를
+    #    두 번 준비하면 원자 수가 달라진다 (실측 4450 vs 4387). 원자 수가 달라지면
+    #    체크포인트를 못 읽어서 **재개가 원리적으로 불가능**했다. 여기서 못 박는다.
+    random.seed(0x7C3 ^ int(round(float(ph) * 10)))
 
     fx = PDBFixer(filename=pdb_in)
     fx.findMissingResidues()
@@ -309,9 +350,17 @@ def prepare(pdb_in, ph, ffpair, pad_nm=None, solvate=True):
             if a.residue.name not in ("HOH", "WAT", "NA", "CL", "SOD", "CLA")]
     q = sum(nb.getParticleParameters(i)[0].value_in_unit(unit.elementary_charge)
             for i in prot)
+    # ★ pH 3 은 단백질이 훨씬 양전하라 중화 Cl⁻ 가 많이 들어간다. 이건 물리적으로
+    #   맞지만(실제 용출액도 그렇다) **이온 세기가 두 조건에서 달라진다**는 뜻이므로
+    #   조용히 두면 안 된다. 개수를 찍어서 차이를 보이게 한다.
+    ions = {}
+    for r in m.topology.residues():
+        if r.name in ("NA", "CL", "SOD", "CLA", "K", "POT"):
+            ions[r.name] = ions.get(r.name, 0) + 1
+    nwat = sum(1 for r in m.topology.residues() if r.name in ("HOH", "WAT"))
     return dict(topology=m.topology, positions=m.positions, system=sysm,
                 atoms=sysm.getNumParticles(), ss=ss, q=round(float(q), 1), nres=nres,
-                protein_top=seq_top)
+                protein_top=seq_top, ions=ions, nwat=nwat)
 
 
 def simulate(prep, plat, steps, chk, dcd, every, seed=0, resume=True,
@@ -342,17 +391,39 @@ def simulate(prep, plat, steps, chk, dcd, every, seed=0, resume=True,
         except Exception as e:
             say(f"        ★ 체크포인트를 못 읽었다 ({type(e).__name__}) — 처음부터")
             done = 0
+    base, bpath = 0, ((chk + ".base") if chk else None)
     if done == 0:
         sim.context.setPositions(prep["positions"])
         sim.minimizeEnergy(maxIterations=min_iters)
         sim.context.setVelocitiesToTemperature(TEMP_K * unit.kelvin, int(seed) + 1)
         if eq_ns > 0:
             sim.step(int(eq_ns * 1000 / DT_PS))
-    left = max(0, steps - done)
+        # ★★ 평형화 뒤의 스텝 수를 **프로덕션 원점**으로 적어 둔다. 안 적으면 재개할 때
+        #    done 에 평형화 스텝이 섞여서 프로덕션이 그만큼 모자라게 돈다
+        #    (실측: 평형 30,000 스텝이면 steps=120 을 재개해도 left=0 이 나오고
+        #     프레임이 2개에서 안 늘었다 — 조용히 짧게 돌고 끝난다).
+        base = int(sim.context.getStepCount())
+        if bpath:
+            try:
+                with open(bpath, "w") as fh:
+                    fh.write(str(base))
+            except Exception:
+                pass
+    elif bpath and os.path.isfile(bpath):
+        try:
+            base = int(open(bpath).read().strip())
+        except Exception:
+            base = 0
+    left = max(0, steps - max(0, done - base))
     t0 = time.time()
     if left:
         if dcd:
-            sim.reporters.append(DCDReporter(dcd, every, append=os.path.isfile(dcd)))
+            # ★★ done == 0 이면 처음부터 다시 도는 것이다. 그런데 예전에는 파일이
+            #    있기만 하면 이어붙여서, 체크포인트를 못 읽은 경우 **독립적인 두 실행이
+            #    한 궤적으로 합쳐졌다** (60스텝 실행이 프레임 4개로 끝나는 것을 재현했다).
+            if done == 0 and os.path.isfile(dcd):
+                os.remove(dcd)
+            sim.reporters.append(DCDReporter(dcd, every, append=(done > 0)))
         if chk:
             # ★ 체크포인트 간격을 **DCD 와 똑같이** 둔다. 두 리포터가 같은 스텝에서
             #   같이 발화하므로 재개했을 때 프레임 수와 스텝 수가 어긋나지 않는다.
@@ -389,13 +460,21 @@ def measure(top_pdb, dcd, linker_seq=""):
     if t.n_frames == 0:
         raise ValueError("프레임이 0개다 — 저장 간격이 프로덕션보다 길지 않은지 봐라")
 
-    s = F.sap(t)
-    area, patch = F.largest_patch(t)
+    # ★★ 분자가 상자 안에서 **굴러다닌다.** 좌표를 프레임 평균하기 전에 겹쳐 놓지 않으면
+    #    평균 좌표 구름이 안쪽으로 뭉개져서 SAP·패치가 실행마다 다른 배수로 부풀려진다
+    #    (실측: 내부 변화가 0인 궤적에 회전만 줬는데 SAP_sum 7.8 → 31.6, 패치 8.8 → 32.7).
+    #    scFv 의 회전 상관시간이 ~12 ns 라 20 ns 실행은 정확히 최악 구간이다.
+    t.superpose(t, 0)
+
+    # ★ SASA 는 **한 번만** 계산해서 돌려쓴다. 예전에는 sap·largest_patch·rel_exposure·
+    #   measure 가 각자 불러서 궤적 하나에 다섯 번 돌았다 (4,000원자에서 프레임당 0.3초).
+    sasa = F.residue_sasa(t)
+    per = np.asarray(sasa).mean(axis=0)
+    s = F.sap(t, sasa=sasa)
+    area, patch = F.largest_patch(t, sasa=sasa)
     nsb, _ = F.salt_bridges(t)
-    rel = F.rel_exposure(t)
-    per = md.shrake_rupley(t, mode="residue").mean(axis=0)
-    hyd = np.array([F.BLACK_MOULD.get(r.name.upper(), 0.5) - 0.5 > 0
-                    for r in t.topology.residues])
+    rel = F.rel_exposure(t, sasa)
+    hyd = F.hydrophobic_mask([r.name.upper() for r in t.topology.residues])
     o = dict(
         SAP_max=float(np.nanmax(s)) if np.isfinite(s).any() else float("nan"),
         SAP_sum=float(np.nansum(np.clip(s, 0, None))),
@@ -419,8 +498,11 @@ def measure(top_pdb, dcd, linker_seq=""):
     else:
         o["링커노출"] = o["링커Re"] = o["링커Rg"] = float("nan")
         o["링커구간"] = ("서열 못 찾음" if not span else "패치 없음")
-    # 수렴 — Rg 의 블록 표류
+    # ★ 수렴 점검을 **관측값 자신의** 시계열로 한다. Rg 는 곁사슬 재배치에 거의
+    #   반응하지 않아(실측 CV 0.07%) SASA 계열(CV 0.9~23%)의 수렴을 대변하지 못한다.
     o["Rg표류"] = float(F.block_drift(md.compute_rg(t)))
+    o["소수성SASA표류"] = float(F.block_drift(np.asarray(sasa)[:, hyd].sum(axis=1)))
+    o["총SASA표류"] = float(F.block_drift(np.asarray(sasa).sum(axis=1)))
     return o
 
 
@@ -485,16 +567,23 @@ def selftest():
         try:
             # prepare() 가 이 계에서 ~60초라 두 번 더 부르면 자체시험이 2분 늘어난다.
             # 같은 prep 으로 Simulation 만 두 번 만들면 재개 경로는 그대로 밟힌다.
+            # ★ 평형화를 **0 이 아니게** 둔다. 0 이면 프로덕션 원점 로직을 안 밟아서
+            #   "재개했더니 평형 스텝이 섞여 프로덕션이 모자라게 돈다" 는 버그를 못 잡는다.
             ck = f"{tmp}/rs.chk"; dd = f"{tmp}/rs.dcd"
             pc = prepare(p0, 7.4, ffpair, solvate=False)
-            simulate(pc, plat, 60, ck, dd, 30, seed=1, resume=False, min_iters=20, eq_ns=0.0)
+            simulate(pc, plat, 60, ck, dd, 30, seed=1, resume=False,
+                     min_iters=20, eq_ns=0.04)          # 평형 10스텝
             _, _, left = simulate(pc, plat, 60, ck, dd, 30, seed=1, resume=True,
-                                  min_iters=20, eq_ns=0.0)
+                                  min_iters=20, eq_ns=0.04)
+            # 그리고 **더 길게** 요청하면 그만큼 더 돌아야 한다
+            _, _, left2 = simulate(pc, plat, 120, ck, dd, 30, seed=1, resume=True,
+                                   min_iters=20, eq_ns=0.04)
             import mdtraj as _md
             nfr = _md.load(dd, top=f"{tmp}/ph7.4.pdb").n_frames if os.path.isfile(dd) else -1
-            say(f"    재개 후 남은 스텝 {left} (0 이어야 한다) · DCD 프레임 {nfr} "
-                f"(2 여야 한다 — 중복 없이)")
-            good = (left == 0) and (nfr == 2)
+            nfr2 = _md.load(dd, top=f"{tmp}/ph7.4.pdb").n_frames if os.path.isfile(dd) else -1
+            say(f"    같은 길이로 재개 → 남은 스텝 {left} (0 이어야) · 프레임 {nfr} (2 여야)")
+            say(f"    두 배 길이로 재개 → 추가 {left2} 스텝 (60 이어야) · 프레임 {nfr2} (4 여야)")
+            good = (left == 0) and (nfr == 2) and (left2 == 60) and (nfr2 == 4)
             say("    " + ("✔ 재개가 정확하다 — 중간에 끊겨도 이어서 간다" if good
                           else "★★ 재개가 어긋난다. 끊기면 결과가 망가진다"))
             ok = ok and good
@@ -551,13 +640,22 @@ def plan(systems, rate, budget_h, ns, seeds, prep_s=0.0):
     by_ab = {}
     for s in systems:
         by_ab.setdefault(s["항체"], []).append(s)
-    keep, i = [], 0
+    # ★★ 항체마다 1개씩 돌아가며 채우면 **항체내 쌍이 0 개**가 된다 — 그 실행은
+    #    무슨 관측값이 나와도 검정을 못 한다. 한 항체를 2개까지 채우고 넘어간다.
+    keep = []
+    for v in by_ab.values():
+        if len(v) >= 2 and len(keep) + 2 <= k:
+            keep += v[:2]
+    i = 2
     while len(keep) < k and any(len(v) > i for v in by_ab.values()):
         for v in by_ab.values():
             if len(v) > i and len(keep) < k:
                 keep.append(v[i])
         i += 1
     dropped = [s for s in systems if s not in keep]
+    if len(keep) < 2:
+        return [], 1.0, 1, ["★★ 이 예산으로는 한 항체의 링커 2종도 못 돌린다.",
+                            "   --budget-hours 를 늘리거나 --ns 를 직접 줘라."]
     return keep, 1.0, 1, [
         f"계당 1 ns · 씨앗 1 로도 예산을 넘겨 **구성체 {len(dropped)}개를 뺐다**",
         "  뺀 것: " + ", ".join(f"{s['항체']}/{s['링커']}" for s in dropped[:10])
@@ -666,8 +764,11 @@ def main(argv=None):
             # ★ 씨앗 루프를 **안쪽**에 둔다. 씨앗은 속도 초기값만 다르므로 준비된 계를
             #   그대로 쓴다. 예전처럼 씨앗마다 prepare() 를 부르면 준비 시간이 씨앗
             #   배수로 늘어난다 — 실제 규모(계당 ~2분)에서 76회면 준비만 2.7시간이다.
+            # ★ 길이가 키에 없으면 1 ns 로 돌린 것을 20 ns 로 착각하고 건너뛴다.
+            #   저장된 ns 가 요청보다 짧으면 다시 돈다.
             todo = [sd for sd in range(seeds)
-                    if f"{s['항체']}|{s['링커']}|{ph}|s{sd}" not in R]
+                    if float(R.get(f"{s['항체']}|{s['링커']}|{ph}|s{sd}", {})
+                             .get("ns", 0.0)) < ns]
             if not todo:
                 say(f"  [{i}/{len(systems)}] {s['항체']}/{s['링커']} pH{ph}  "
                     f"건너뜀 (씨앗 {seeds}개 다 있다)")
@@ -693,8 +794,9 @@ def main(argv=None):
                             PDBFile.writeFile(p["topology"], p["positions"], fh)
                     simulate(p, plat, steps, chk, dcd, every, seed=sd)
                     o = measure(top, dcd, s.get("링커서열", ""))
-                    o.update(항체=s["항체"], 링커=s["링커"], pH=ph, 씨앗=sd,
+                    o.update(항체=s["항체"], 링커=s["링커"], pH=ph, 씨앗=sd, ns=float(ns),
                              원자=p["atoms"], 이황화=p["ss"], 순전하=p["q"],
+                             이온=p.get("ions", {}), 물=p.get("nwat", 0),
                              HMW=s.get("HMW", float("nan")))
                     R[key] = o
                     save_json(R, res_path)
@@ -772,10 +874,10 @@ def analyze(R, systems):
         ws.append(dict(관측값=c,
                        pH3절대_몫=round(w_a, 3) if np.isfinite(w_a) else np.nan,
                        차분_몫=round(w_d, 3) if np.isfinite(w_d) else np.nan,
-                       판정="사용" if (np.isfinite(w_d) and w_d >= 0.3) else "★버림"))
-    WS = pd.DataFrame(ws).sort_values("차분_몫", ascending=False)
+                       판정="사용" if (np.isfinite(w_a) and w_a >= 0.3) else "★버림"))
+    WS = pd.DataFrame(ws).sort_values("pH3절대_몫", ascending=False)
     say(WS.to_string(index=False))
-    say("    ※ '판정' 은 차분 기준이다 (탐색 목록을 정하는 데만 쓴다).")
+    say("    ※ '판정' 은 **pH3 절대값 몫** 기준이다 (탐색 목록을 정하는 데만 쓴다).")
     say("      주 검정은 이 관문을 **안 거친다** — 사전등록됐기 때문이다.")
     live = [r.관측값 for r in WS.itertuples() if r.판정 == "사용"]
 
@@ -811,8 +913,18 @@ def analyze(R, systems):
     from itertools import permutations
 
     def conc(x, h):
+        """x 가 큰 쪽이 h 도 큰 쌍의 수. **동률은 양쪽 다 0.5 점.**
+
+        ★★ 예전에는 x 동률이 `else` 로 흘러가 행 순서대로 채점됐다. 그러면
+           **모든 값이 같은 (=정보가 0인) 관측값이 p = 0.0000 을 낸다.**
+           linker_shield 는 패치 근처에 링커가 없으면 그냥 1.0 을 돌려주므로
+           주 관측값에서 실제로 일어나는 상황이다.
+        """
         c = 0.0
         for i, j in itertools.combinations(range(len(x)), 2):
+            if x[i] == x[j]:
+                c += 0.5
+                continue
             a, b = (i, j) if x[i] < x[j] else (j, i)
             c += 1.0 if h[b] > h[a] else (0.5 if h[b] == h[a] else 0.0)
         return c
@@ -844,12 +956,20 @@ def analyze(R, systems):
                     nt[k0 + k1] += v0 * v1 / s
             tot = nt
         k = np.array(sorted(tot)); pr = np.array([tot[v] for v in sorted(tot)])
+        hi = float(pr[k >= obs].sum()); lo = float(pr[k <= obs].sum())
+        # ★ 기전이 부호를 말해주는 것(주 관측값)만 단측. 나머지는 **양측** —
+        #   예전에는 전부 우측 단측이라 반대 방향을 예측하는 축은 검정력이 0 이었다
+        #   (예: Δ염다리수는 pH3 에서 남은 염다리가 많을수록 덜 열렸다는 뜻이라 반대다).
+        one = (c == "주_링커노출_pH3")
         out.append(dict(관측값=c, 일치=obs, 최대=float(k.max()),
                         귀무=round(float((k * pr).sum()), 1),
-                        p=round(float(pr[k >= obs].sum()), 4)))
+                        검정="단측" if one else "양측",
+                        p=round(hi if one else min(1.0, 2 * min(hi, lo)), 4)))
     P = pd.DataFrame(out)
-    if not len(P):
-        say("  검정할 관측값이 없다."); return 0
+    if not len(P) or "p" not in P.columns:
+        say("  ★ 항체 안에서 HMW 쌍을 만들 수 있는 항체가 없다 — 순위 검정을 못 한다.")
+        say("    (HMW 가 붙은 구성체가 한 항체에 2개 이상 있어야 한다.)")
+        return 0
     P["역할"] = ["**주(사전등록)**" if c == "주_링커노출_pH3" else "탐색"
                  for c in P.관측값]
     say(P.to_string(index=False))

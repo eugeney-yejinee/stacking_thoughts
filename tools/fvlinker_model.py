@@ -242,9 +242,17 @@ def ln_ceff(n, r_ab, b, re2=None):
 
 # ── [5] 순위 검정 — 항체 안에서만 섞는 정확 순열 ────────────────────────────
 def conc(x, h):
-    """x(=ln c_eff) 가 클수록 h(=HMW) 가 작다는 쌍의 수. 동률은 0.5점."""
+    """x(=ln c_eff) 가 클수록 h(=HMW) 가 작다는 쌍의 수. **동률은 양쪽 다 0.5점.**
+
+    ★ x 동률을 행 순서로 흘리면 정보가 0인 축이 만점을 받는다. Gaussian 가지에서는
+      ln c_eff 가 길이에만 의존하므로 **같은 길이 다른 조성** 링커가 정확히 이 경우다 —
+      이 프로젝트가 가르려는 바로 그 쌍이다.
+    """
     c = 0.0
     for i, j in itertools.combinations(range(len(x)), 2):
+        if x[i] == x[j]:
+            c += 0.5
+            continue
         a, b_ = (i, j) if x[i] < x[j] else (j, i)     # a = c_eff 작은 쪽
         c += 1.0 if h[b_] < h[a] else (0.5 if h[b_] == h[a] else 0.0)
     return c
