@@ -1838,6 +1838,12 @@ PRIMARY     = "열림분율"                                    # 확증 특징 
 #   고른 셈이라, 많이 열린 링커일수록 남은 프레임의 OCD6 가 **낮게** 보일 수 있다.
 #   OCD5 로 가면 확증 특징(열림분율, dc 기반)과 각도 특징이 서로 독립이 된다.
 EXPLORATORY = ["OCD5중앙", "OCD5_MAD", "링커접촉_잔기당"]     # 탐색 특징 (3개, Holm 보정)
+# ★ 꼬리 특징군 — 사전 등록 **밖**이다. 원장과 분산 분해에만 쓰고, 검정하면
+#   반드시 Holm 으로 묶는다. (실측에 한 번 돌려 봤고 전부 귀무였다: 최고 p 0.22,
+#   Holm 후 생존 없음. 그래도 남겨 둔다 — 설계가 바뀌면 다시 물을 축이다.)
+TAIL_FEATS  = ["OCD5_p90", "OCD5_p95", "OCD5_p99", "열림_dc4", "열림_dc6",
+               "열림_dc10", "안붙음_심도", "붙음중_꼬리10", "붙음중_꼬리15",
+               "붙음중_꼬리20"]
 BASELINE    = ["길이"]                                      # 증분 검정의 귀무모형
 GEN         = "BioEmu"
 
@@ -1903,6 +1909,26 @@ def build_features(frames, geom, gen=GEN, pair_dc=PAIR_DC):
             d[f"{m_}중앙"] = float(np.median(src[m_]))
             d[f"{m_}_MAD"] = mad(src[m_])
         d["자연2σ밖"] = outside_2sigma(src)
+        # ── ★ 꼬리 특징군 — "100개 중 튀는 5개" 를 직접 재는 것들 ────────────
+        #   기전은 **소수 집단**이다: 대부분은 얌전하고 일부만 열려서 이량체를
+        #   만든다. 그러면 중앙값은 그 소수를 정의상 못 본다. 그래서 따로 잰다.
+        #   ※ 실제로 이 앙상블은 이봉분포다 — 붙음 중앙 OCD5 ≈ 6, 안붙음 ≈ 70.
+        #     게이트가 임의로 자른 게 아니라 실재하는 두 덩어리를 가른다.
+        _o = g["OCD5"].values.astype(float)
+        for _p in (90, 95, 99):
+            d[f"OCD5_p{_p}"] = float(np.nanpercentile(_o, _p))
+        # 더 엄한 열림 — '안 붙음' 보다 **얼마나 멀리 갔나**
+        _dc = (g["dc"] - DC0).abs() if "dc" in g.columns else g["Δdc"].abs()
+        for _t in (4.0, 6.0, 10.0):
+            d[f"열림_dc{int(_t)}"] = float((_dc.values >= _t).mean())
+        d["안붙음_심도"] = float(np.median(_o[~g.짝지음.values])) \
+            if (~g.짝지음.values).sum() > 5 else np.nan
+        # ★ **붙어 있는데 이미 비틀린** 집단 — 도메인교환 가설이 직접 겨누는 곳.
+        #   완전히 떨어지기 전 단계라 단량체로 남아 있으면서 계면을 내보인다.
+        if len(c) > 5:
+            _oa = c["OCD5"].values.astype(float)
+            for _t in (10, 15, 20):
+                d[f"붙음중_꼬리{_t}"] = float((_oa > _t).mean())
         # ★ "기준점 앙상블과의 거리" 는 못 잰다 — BioEmu 는 단일 사슬만 되므로
         #   링커 없는 Fv 의 앙상블을 만들 수 없다 (README: "only supports monomers").
         #   대신 **같은 항체의 다른 링커들을 합친 분포**와의 거리를 잰다.
@@ -2085,6 +2111,38 @@ if len(_badnm):
     print("     블록 간 '같은 링커' 대조가 성립하지 않는다.")
     display(_real[_real.링커.isin(_badnm.index)]
             .groupby(["링커", "길이"])[GROUP].apply(lambda v: sorted(set(v))).reset_index())
+
+# ── ★ 분산 분해 — 이 특징의 변동이 '항체 사이' 인가 '링커 사이' 인가 ────────
+#   링커 신호는 **항체 안** 변동에만 있다. 타깃을 항체 안에서 중심화하므로
+#   항체 간 성분은 통째로 지워진다. 그러면 항체내몫이 작은 특징은
+#   **라벨을 보기도 전에** 링커 신호를 나를 수 없다는 것이 정해져 있다.
+#   ※ 이건 y 를 안 쓰는 사전점검이라 몇 번을 봐도 다중비교가 안 생긴다.
+#   ※ 실측에서 실제로 나온 값: 열림분율 0.61 · OCD5_p95 0.76 인데
+#     붙음중_중앙 0.23 · 안붙음_심도 0.20 · 말단간_중앙 0.29 였다.
+#     뒤 셋은 '링커를 재는' 게 아니라 **어느 항체인지를 재고** 있었다.
+print("="*76); print("★ 분산 분해 — 변동이 항체 사이인가 링커 사이인가 (y 를 안 본다)"); print("="*76)
+print("  항체내몫 = 항체내분산 / (항체간분산 + 항체내분산).")
+print("  0.3 미만이면 그 특징은 **링커가 아니라 항체 정체성**을 재고 있다 —")
+print("  항체 고정효과가 나머지를 지우므로 검정력이 아니라 **정보가** 없다.\n")
+_vd = []
+for _c in [x for x in ALLF + TAIL_FEATS if x in USE.columns]:
+    _v = pd.to_numeric(USE[_c], errors="coerce")
+    if _v.notna().sum() < 4 or _v.std(ddof=1) < 1e-12: continue
+    _m = _v.groupby(USE[GROUP]).transform("mean")
+    _sb = float(_v.groupby(USE[GROUP]).mean().std(ddof=1))
+    _sw = float((_v - _m).std(ddof=1))
+    _sh = _sw**2/(_sb**2 + _sw**2) if (_sb**2 + _sw**2) > 1e-30 else np.nan
+    _vd.append(dict(특징=_c, 항체간SD=round(_sb, 3), 항체내SD=round(_sw, 3),
+                    항체내몫=round(_sh, 2),
+                    판정=("★ 항체를 재고 있다" if _sh < 0.3 else
+                          "치우쳐 있다" if _sh < 0.5 else "쓸 만하다")))
+VDEC = pd.DataFrame(_vd).sort_values("항체내몫", ascending=False)
+display(VDEC)
+_dead = list(VDEC[VDEC.항체내몫 < 0.3].특징)
+if _dead:
+    print(f"  ★★ 항체내몫 < 0.3: {_dead}")
+    print("     이 특징들은 이 설계에서 링커 신호를 **원리적으로** 못 나른다.")
+    print("     p 가 크게 나와도 '효과 없음' 이 아니라 '정보가 없음' 이다.")
 
 print("="*76); print("★ 특징 잡음 원장 — 특징 하나가 150 프레임의 통계량이다"); print("="*76)
 print("  관측 상관 ≈ 참 상관 × 감쇠배율.  '상관이 없다' 와 '특징이 시끄럽다' 를 여기서 가른다.")
