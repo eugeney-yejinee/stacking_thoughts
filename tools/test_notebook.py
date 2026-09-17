@@ -1,4 +1,4 @@
-"""FvFlow_v12.ipynb 의 **분석 셀을 실제로 실행**해 본다.
+"""FvLinker_v12.ipynb 의 **분석 셀을 실제로 실행**해 본다.
 
 Drive·GPU·BioEmu 가 필요한 셀(0~5절 실행부)은 건너뛰고, 그 셀들이 만들었을
 표(CONS · E · G)를 가짜로 만들어 넣은 뒤 6~9절을 통째로 돌린다.
@@ -21,7 +21,7 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NB = os.path.join(ROOT, "notebooks", "FvFlow_v12.ipynb")
+NB = os.path.join(ROOT, "notebooks", "FvLinker_v12.ipynb")
 
 # 실행할 셀 — 3절-B 부터 9절 그림까지 (Drive·GPU 를 안 쓴다)
 #

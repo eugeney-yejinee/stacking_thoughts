@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""FvFlow v12 노트북 생성기.
+"""FvLinker v12 노트북 생성기.
 
 왜 생성기인가 — .ipynb 는 JSON 이라 손으로 고치면 셀 하나 바꾸는 데도 위험하다.
 셀을 여기 파이썬 문자열로 두고 `python3 tools/build_v12.py` 로 찍어낸다.
 **노트북을 직접 고치지 말고 이 파일을 고쳐라.**
 
-    python3 tools/build_v12.py            # notebooks/FvFlow_v12.ipynb 를 쓴다
+    python3 tools/build_v12.py            # notebooks/FvLinker_v12.ipynb 를 쓴다
     python3 tools/build_v12.py --check    # 모든 코드 셀이 파싱되는지만 본다
 """
 import ast
@@ -26,7 +26,7 @@ def code(src):
 
 # ═════════════════════════════════════════════════════════════════════════════
 md(r'''
-# FvFlow v12 · 링커가 VH-VL 배향 **분포**를 바꾸는가, 그게 순도와 이어지는가
+# FvLinker v12 · 링커가 VH-VL 배향 **분포**를 바꾸는가, 그게 순도와 이어지는가
 
 ```
                   ┌── ABodyBuilder2 ──→ 기준점 (이상적 VH-VL 각도)
@@ -192,7 +192,11 @@ import os, glob, time, json, numpy as np, pandas as pd
 
 DRIVE = "/content/drive/MyDrive/FvTwist"
 IN    = f"{DRIVE}/input"
-OUT   = f"{DRIVE}/fvflow"          # ★ v09 와 **같은 폴더**. 만든 것을 그대로 읽는다.
+OUT   = f"{DRIVE}/fvflow"          # ★ 이름이 FvLinker 로 바뀌어도 **이 경로는 안 바꾼다.**
+                                   #   여기에 BioEmu 앙상블·__BioEmu.done·모든 캐시 CSV 가
+                                   #   들어 있다. 바꾸면 전부 고아가 되고 처음부터 다시 돈다.
+                                   #   그리고 **시험이 이 실수를 못 잡는다** — run_in_order 와
+                                   #   test_notebook 은 각자 OUT 을 주입하므로 둘 다 통과한다.
 for d in (IN, OUT): os.makedirs(d, exist_ok=True)
 
 XL_TEST = None        # None 이면 IN 의 test_result*.xlsx 중 최신
@@ -5175,7 +5179,7 @@ md(r'''
 # ═════════════════════════════════════════════════════════════════════════════
 def main():
     out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                       "notebooks", "FvFlow_v12.ipynb")
+                       "notebooks", "FvLinker_v12.ipynb")
     bad = 0
     for i, (t, s) in enumerate(CELLS):
         if t != "code":

@@ -1,4 +1,4 @@
-# FvFlow v12 — 링커가 scFv 의 VH-VL 배향 분포를 바꾸는가, 그게 순도와 이어지는가
+# FvLinker v12 — 링커가 scFv 의 VH-VL 배향 분포를 바꾸는가, 그게 순도와 이어지는가
 
 ```
                   ┌── ABodyBuilder2 ──→ 기준점 (이상적 VH-VL 각도)
@@ -16,7 +16,7 @@ scFv ─┬─ VL / VH ─┤                        └── 계면 강도 (BS
 
 | 파일 | 내용 |
 |---|---|
-| `notebooks/FvFlow_v12.ipynb` | **본체.** Colab 에서 이것만 열면 된다 |
+| `notebooks/FvLinker_v12.ipynb` | **본체.** Colab 에서 이것만 열면 된다 |
 | `tools/build_v12.py` | 노트북 생성기. **노트북을 직접 고치지 말고 이걸 고쳐라** |
 | `tools/fvml.py` | 소표본 추론 핵심 (7절이 들고 있는 것과 같은 코드) |
 | `tools/fvfeat.py` | 앙상블 → 특징표 (6절이 들고 있는 것과 같은 코드) |

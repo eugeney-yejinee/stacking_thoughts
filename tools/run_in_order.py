@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NB_DEFAULT = os.path.join(ROOT, "notebooks", "FvFlow_v12.ipynb")
+NB_DEFAULT = os.path.join(ROOT, "notebooks", "FvLinker_v12.ipynb")
 
 N_FRAMES = 40           # 실제는 150. 여기서는 빠르게.
 N_AB = 5                # 항체(=블록) 수

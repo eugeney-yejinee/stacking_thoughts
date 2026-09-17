@@ -20,7 +20,7 @@ import os
 import sys
 
 NB_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "notebooks", "FvFlow_v12.ipynb")
+                          "notebooks", "FvLinker_v12.ipynb")
 
 #: Colab 이 기본으로 넣어 주는 이름들
 COLAB = {"display", "get_ipython", "In", "Out", "exit", "quit"}
