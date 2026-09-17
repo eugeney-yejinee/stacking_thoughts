@@ -224,6 +224,13 @@ CALV_STEPS   = 2_000_000
 #   CPU 로 하나씩 돌리면 며칠이다. None 이면 전부 — 시간을 재고 나서 풀어라.
 CALV_MAX_RUNS = 6     # 이번 실행에서 돌릴 최대 시뮬레이션 수 (None = 제한 없음)
 CALV_ONLY     = None  # 예: ("실측4_B1_LH", "G4S") 로 한 구성체만
+# ★ VH+VL 을 통째로 강체로 둘까. True 면 domains.yaml 을 **중첩 리스트**로 써서
+#   두 도메인이 한 덩어리가 된다 (build.py:get_ssdomains → check_ssdomain).
+#   False 면 따로 구속되어 짝지음을 비특이적 λ 가 정한다 — 권장하지 않는다.
+CALV_RIGID_FV = True
+CALV_BOX_NM   = 30.0  # 상자 한 변(nm). 두 사슬이 대부분 떨어져 있어야 g(r) 꼬리가 1 이다
+CALV_NSAVE    = 1000  # 저장 간격(스텝)
+CALV_NFRAMES  = 1000  # 저장 프레임 수 → steps = NSAVE × NFRAMES
 CALV_PATCH_Q = 0.25   # '끈끈한 패치' = 소수성 상위 25% 표면 잔기
 # ★ 어떤 앙상블 구조를 강체로 넣을까 — 이게 10절에서 제일 중요한 선택이다.
 #   CALVADOS 3 은 접힌 부분을 **입력 구조로 구속**하므로, VH+VL 을 통째로 강체로
@@ -1108,9 +1115,18 @@ if len(SPAN):
     if len(CEFF):
         CEFF.to_csv(f"{OUT}/c_eff.csv", index=False, encoding="utf-8-sig")
         display(CEFF.head(12))
-        _w = CEFF.groupby("항체").c_eff_mM.agg(["min", "max"])
-        print(f"  항체 안 c_eff 배수 중앙 "
-              f"{float((_w['max']/_w['min']).median()):.2f}배 → 항체내 변동이 있다.")
+        # ★ 링커가 1종뿐인 항체는 배수가 정의상 1.00 이다. 그런 항체가 절반을
+        #   넘으면 중앙값이 1.00 으로 눌린다 — 실측에서 그렇게 나왔다(11 중 6).
+        #   **링커 2종 이상인 항체만** 센다.
+        _w = (CEFF.groupby("항체").c_eff_mM.agg(["min", "max", "count"])
+              .query("count >= 2"))
+        if len(_w):
+            _rat = (_w["max"]/_w["min"])
+            print(f"  항체 안 c_eff 배수 (링커 2종 이상인 항체 {len(_w)}개): "
+                  f"중앙 {float(_rat.median()):.2f}배 · 범위 "
+                  f"{float(_rat.min()):.2f}~{float(_rat.max()):.2f}배")
+        else:
+            print("  링커가 2종 이상인 항체가 없다 — 항체 안 비교가 불가능하다.")
         print("  ★ 예측: 항체별 |길이 기울기| 순위가 이 배수의 순위를 따라야 한다.")
         print("    라벨을 안 쓰고 낸 순위 예측이므로 사전 등록할 수 있다.")
 ''')
@@ -4447,7 +4463,11 @@ def pick_conformers(ab, lk, n_closed=None, n_open=None, q=None):
     q        = CALV_OPEN_Q   if q        is None else q
     if not len(G):
         return {}, "geom.csv 가 없다 — 5절-B 를 먼저 돌려라"
-    g = G[(G.항체 == ab) & (G.링커 == lk)].dropna(subset=["도메인Rg"])
+    # ★ geom.csv 에는 BBFlow 프레임도 있다 (v09 이 기준점 앙상블로 쓴 것).
+    #   그건 **링커가 없는 2사슬 구조**라 여기 들어오면 안 된다 — 실측 첫 실행에서
+    #   G4S__BBFlow-AF2_s76 같은 것이 골라졌다. 태그로 생성기를 걸러낸다.
+    g = G[(G.항체 == ab) & (G.링커 == lk)].dropna(subset=["도메인Rg"]).copy()
+    g = g[g.태그.astype(str).str.contains(f"__{GEN}_s", regex=False)]
     if len(g) < (n_closed + n_open) * 2:
         return {}, f"프레임이 {len(g)}개뿐이다"
     g = g.sort_values("도메인Rg").reset_index(drop=True)
@@ -4662,173 +4682,205 @@ print("10절 관측량 함수 준비 완료 (fvcalv.py 와 같은 코드 · 자�
 ''')
 
 code(r'''
-# ── 10절-A3 · ★ 실제로 돌린다 ─────────────────────────────────────────────
-# CALVADOS 저장소(KULL-Centre/CALVADOS)의 two_IDR_MDP 예제와 **같은 API** 다.
-# 핵심 하나: `domains.yaml` 의 항목을 **중첩 리스트**로 주면 그 잔기들이 하나의
-# 강체로 묶인다 (build.py:get_ssdomains → check_ssdomain(req_both=True) 이
-#   i, j 가 **같은** ssdom 안에 있을 때만 구속을 건다).
-#     scFv: [[[1,b1],[b2+1,N]]]   ← VH+VL 을 한 덩어리로 (기본. 배향이 고정된다)
-#     scFv: [[1,b1],[b2+1,N]]     ← 따로 (짝지음을 비특이적 λ 가 정한다 — 못 믿는다)
-CALV_RIGID_FV = True     # False 로 두면 VH·VL 을 따로 구속한다 (권장 안 함)
-CALV_BOX_NM   = 30.0     # 상자 한 변. 두 사슬이 대부분 떨어져 있어야 g(r) 꼬리가 1 이 된다
-CALV_NSAVE    = 1000     # 저장 간격(스텝)
-CALV_NFRAMES  = 1000     # 저장 프레임 수 → steps = NSAVE × NFRAMES
+# ── 10절-A3 · ★ 두 구조를 한 상자에 넣고 **얼마나 잘 붙는지** 잰다 ────────
+# 종(種)이 셋이다. 셋을 짝지어 6가지 조합을 돌리면 혼합식의 세 항이 **전부** 나온다.
+#   닫힘   BioEmu 앙상블에서 도메인Rg 가 낮은 프레임 (대부분이 이 상태다)
+#   열림   도메인Rg 상위 10% — 당신이 눈으로 본 "튀는" 구조
+#   기준점 ABodyBuilder2 구조. 링커가 **없는** Fv 라 다른 분자다 (아래 주의)
+#
+#   B_cc = 닫힘↔닫힘 · B_co = 닫힘↔열림 · B_oo = 열림↔열림
+#   → B22_app = (1−f)²B_cc + 2f(1−f)B_co + f²B_oo  를 **구간이 아니라 값으로** 낸다.
+#
+# ★ 기준점은 링커가 없다. 그래서 기준점이 낀 조합은 "링커가 없었다면 어땠나" 의
+#   대조군이지 같은 분자끼리의 비교가 아니다. 그렇게 읽어라.
+CALV_PAIRS = [("닫힘", "닫힘"), ("닫힘", "열림"), ("열림", "열림"),
+              ("기준점", "닫힘"), ("기준점", "열림"), ("기준점", "기준점")]
+CALV_N_PER = 1        # 조합당 구조 쌍 몇 개 (2 이상이면 프레임 선택 잡음이 나온다)
 
-def _write_calv_inputs(d, name, seq, b1, b2, src_pdb):
-    """FASTA · PDB · domains.yaml 을 CALVADOS 형식으로 쓴다. 잔기 번호는 1-based."""
+_1TO3 = {v: k for k, v in _3to1_g.items()}
+
+def _ca_pdb(path_out, cas, seq=None):
+    """CA 만 있는 PDB 를 쓴다. **잔기 이름을 제대로 넣는다** —
+    CALVADOS 는 서열을 FASTA 가 아니라 **PDB 에서** 읽는다
+    (components.py:38-43 → sequence.seq_from_pdb). 전부 ALA 로 쓰면
+    이 분자를 폴리알라닌으로 본다."""
+    with open(path_out, "w") as f:
+        k, ch_prev = 0, None
+        for i, a in enumerate(cas):
+            r = a.get_parent()
+            ch = r.get_parent().id
+            if ch_prev is not None and ch != ch_prev:
+                f.write("TER\n")
+            ch_prev = ch
+            k += 1
+            rn = (_1TO3.get(seq[i].upper(), "GLY") if seq is not None
+                  else r.get_resname())
+            x, y, z = a.coord
+            f.write(f"ATOM  {k:>5}  CA  {rn} A{k:>4}    "
+                    f"{x:>8.3f}{y:>8.3f}{z:>8.3f}  1.00  0.00           C\n")
+        f.write("TER\nEND\n")
+    return k
+
+def prep_species(d, name, kind, r0, src_pdb):
+    """한 종의 CALVADOS 입력(FASTA·PDB·도메인 범위)을 만든다."""
     os.makedirs(d, exist_ok=True)
-    with open(f"{d}/{name}.fasta", "w") as f:
-        f.write(f">{name}\n{seq}\n")
-    # CALVADOS 는 CA 만 본다. BioEmu 프레임(백본만)도 그대로 쓸 수 있다.
     st = first_model(src_pdb)
     if st is None:
         raise ValueError(f"구조를 못 읽었다: {src_pdb}")
     cas = [r["CA"] for c in st for r in c if "CA" in r]
-    if len(cas) != len(seq):
-        raise ValueError(f"CA {len(cas)}개 ≠ 서열 {len(seq)}잔기 — 경계가 안 맞는다")
-    with open(f"{d}/{name}.pdb", "w") as f:
-        for i, a in enumerate(cas, 1):
-            x, y, z = a.coord
-            f.write(f"ATOM  {i:>5}  CA  ALA A{i:>4}    "
-                    f"{x:>8.3f}{y:>8.3f}{z:>8.3f}  1.00  0.00           C\n")
-        f.write("END\n")
-    dom = ([[[1, int(b1)], [int(b2) + 1, len(seq)]]] if CALV_RIGID_FV
-           else [[1, int(b1)], [int(b2) + 1, len(seq)]])
-    with open(f"{d}/domains.yaml", "w") as f:
-        f.write(json.dumps({name: dom}))       # JSON 은 YAML 의 부분집합이다
-    return dom
+    if kind == "기준점":
+        # ABB2 는 H·L 두 사슬이고 링커가 없다. 서열은 구조에서 읽는다.
+        seq = "".join(_3to1_g.get(a.get_parent().get_resname(), "X") for a in cas)
+        n1 = sum(1 for c in st for r in c if "CA" in r
+                 and r.get_parent().id == list(st)[0].id)
+        dom = [[[1, n1], [n1 + 1, len(cas)]]] if CALV_RIGID_FV else \
+              [[1, n1], [n1 + 1, len(cas)]]
+    else:
+        seq = r0.seq
+        if len(cas) != len(seq):
+            raise ValueError(f"CA {len(cas)}개 ≠ 서열 {len(seq)}잔기")
+        dom = ([[[1, int(r0.b1)], [int(r0.b2) + 1, len(seq)]]] if CALV_RIGID_FV
+               else [[1, int(r0.b1)], [int(r0.b2) + 1, len(seq)]])
+    _ca_pdb(f"{d}/{name}.pdb", cas, None if kind == "기준점" else seq)
+    with open(f"{d}/{name}.fasta", "w") as f:
+        f.write(f">{name}\n{seq}\n")
+    return seq, dom
 
-def run_calvados_pair(name, seq, b1, b2, src_pdb, work, res_csv, platform="CPU"):
-    """같은 분자 **두 사슬**을 한 상자에 넣고 돌린 뒤 COM 궤적을 남긴다."""
+def run_calvados_dimer(work, specs, res_csv, platform="CPU"):
+    """specs = [(이름, 종류, 원본PDB), ...] 길이 1(같은 종 2분자) 또는 2(다른 두 종)."""
     from calvados.cfg import Config, Components
-    inp = f"{work}/input"; _write_calv_inputs(inp, name, seq, b1, b2, src_pdb)
-    cfg = Config(sysname=name, box=[CALV_BOX_NM]*3, temp=CALV_TEMP,
+    inp = f"{work}/input"; os.makedirs(inp, exist_ok=True)
+    doms = {}
+    for nm, kind, src, r0 in specs:
+        _, d = prep_species(inp, nm, kind, r0, src)
+        doms[nm] = d
+    with open(f"{inp}/domains.yaml", "w") as f:
+        f.write(json.dumps(doms))          # JSON 은 YAML 의 부분집합이다
+    sysname = "sys"
+    cfg = Config(sysname=sysname, box=[CALV_BOX_NM]*3, temp=CALV_TEMP,
                  ionic=CALV_IONIC, pH=CALV_PH, topol="random",
                  wfreq=CALV_NSAVE, steps=CALV_NSAVE*CALV_NFRAMES, runtime=0,
                  platform=platform, restart="checkpoint", frestart="restart.chk",
                  verbose=False)
+    cid = ({specs[0][0]: (0, 1)} if len(specs) == 1
+           else {specs[0][0]: 0, specs[1][0]: 1})
     ana = (f"from calvados.analysis import calc_com_traj\n"
-           f"calc_com_traj(path='{work}', sysname='{name}', output_path='{work}/data',"
-           f" residues_file='{res_csv}', chainid_dict=dict({name}=(0,1)), start=100)\n")
+           f"calc_com_traj(path='{work}', sysname='{sysname}',"
+           f" output_path='{work}/data', residues_file='{res_csv}',"
+           f" chainid_dict={cid!r}, start=100)\n")
     cfg.write(work, name="config.yaml", analyses=ana)
-    comp = Components(molecule_type="protein", nmol=2, restraint=True,
+    comp = Components(molecule_type="protein", nmol=1, restraint=True,
                       charge_termini="both", fresidues=res_csv,
-                      ffasta=f"{inp}/{name}.fasta", fdomains=f"{inp}/domains.yaml",
-                      pdb_folder=inp, restraint_type="harmonic", use_com=True,
-                      colabfold=1, k_harmonic=700.)
-    comp.add(name=name)
+                      ffasta=f"{inp}/{specs[0][0]}.fasta",
+                      fdomains=f"{inp}/domains.yaml", pdb_folder=inp,
+                      restraint_type="harmonic", use_com=True, colabfold=1,
+                      k_harmonic=700.)
+    for nm, *_ in specs:
+        comp.add(name=nm, nmol=(2 if len(specs) == 1 else 1))
     comp.write(work, name="components.yaml")
-    # ★ sh() 는 리스트를 받고 cwd 를 못 바꾼다. run.py 가 상대경로를 쓰므로
-    #   subprocess 로 직접 돌리면서 cwd 를 준다.
     env = dict(os.environ, MPLBACKEND="Agg"); env.pop("PYTHONPATH", None)
     pr = subprocess.run([sys.executable, f"{work}/run.py", "--path", work],
                         capture_output=True, text=True, cwd=work, env=env)
     if pr.returncode != 0:
-        raise RuntimeError((pr.stderr or pr.stdout or "")[-600:])
-    return pr
+        out = (pr.stderr or "") + "\n" + (pr.stdout or "")
+        if not globals().get("_CALV_DUMPED"):
+            globals()["_CALV_DUMPED"] = True
+            print("\n" + "="*76)
+            print("★ 첫 실패 — 전체 출력 (이 한 번만 찍는다)"); print("="*76)
+            print(out[-6000:]); print("="*76 + "\n", flush=True)
+        er = [l for l in out.split("\n")
+              if re.match(r"^\s*[\w.]*(Error|Exception)\b", l)]
+        raise RuntimeError(" | ".join(er[-3:]) if er
+                           else "\n".join([l for l in out.split("\n") if l.strip()][-10:]))
+    import mdtraj as md
+    t = md.load(f"{work}/data/{sysname}_com_traj.dcd",
+                top=f"{work}/data/{sysname}_com_top.pdb")
+    rr, gg = md.compute_rdf(t, pairs=[[0, 1]],
+                            r_range=(0.5, CALV_BOX_NM/2), bin_width=0.1)
+    return b22_from_rdf(rr, gg)
 
 def b22_from_rdf(r, g, r_core_from_grid=True):
-    """g(r) → B22.  B22 = −2π∫[g(r)−1]r²dr   (nm³)
-
-    g = exp(−W/kT) 이므로 (g−1) 이 곧 마이어 f 함수다. PMF 를 거치지 않아서
-    배제 영역(g=0)에서 log 가 발산하지 않는다 — 궤적에서 낼 때는 이 쪽이 안전하다.
-    상류 예제와 같은 식이되, 격자 **밖**(0~r[0]) 완전배제분 +2π·r[0]³/3 을 더한다."""
+    """g(r) → B22 = −2π∫[g−1]r²dr (nm³). g=exp(−W/kT) 라 (g−1) 이 마이어 f 다.
+    상류(CALVADOS two_IDR_MDP) 조리법과 같되 격자 밖 완전배제분을 더한다."""
     r = np.asarray(r, float); g = np.asarray(g, float)
     if r.shape != g.shape or r.ndim != 1 or len(r) < 3:
         raise ValueError("r 과 g 는 길이 3 이상의 같은 1차원 배열이어야 한다")
     o = np.argsort(r); r, g = r[o], g[o]
-    if np.any(r <= 0): raise ValueError("r 은 양수여야 한다")
     tz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
-    out = -2.0*np.pi*tz((g - 1.0)*r**2, r)
-    return float(out + (2.0*np.pi*(r[0]**3)/3.0 if r_core_from_grid else 0.0))
+    return float(-2.0*np.pi*tz((g - 1.0)*r**2, r)
+                 + (2.0*np.pi*(r[0]**3)/3.0 if r_core_from_grid else 0.0))
 
-if RUN_CALVADOS and HAVE_CALV and CONF:
-    import mdtraj as md
+if RUN_CALVADOS and HAVE_CALV and CONF and RES_CSV:
     try:
         import torch as _t; _gpu = bool(_t.cuda.is_available())
     except Exception:
         _gpu = bool(shutil.which("nvidia-smi"))
-    _plat = "CUDA" if _gpu else "CPU"
-    print(f"플랫폼 {_plat} · 상자 {CALV_BOX_NM} nm · "
-          f"{CALV_NSAVE*CALV_NFRAMES:,} 스텝 · Fv 강체 {CALV_RIGID_FV}")
-    if _plat == "CPU":
-        print("  ★ GPU 가 없다. 구성체 하나에 몇 시간 걸린다 — 먼저 한 건만 돌려 보라.")
-    rows, t0, _nrun = [], time.time(), 0
+    PLAT = "CUDA" if _gpu else "CPU"
+    os.makedirs(f"{OUT}/calvados", exist_ok=True)
     _items = [(k, v) for k, v in CONF.items()
               if CALV_ONLY is None or k == tuple(CALV_ONLY)]
-    _tot = sum(len(v) for _, s_ in _items for v in s_.values())
-    print(f"  이번에 돌릴 것 {min(_tot, CALV_MAX_RUNS or _tot)}/{_tot}건"
-          + (f" (CALV_MAX_RUNS={CALV_MAX_RUNS})" if CALV_MAX_RUNS else "")
-          + (f" · CALV_ONLY={CALV_ONLY}" if CALV_ONLY else ""))
-    print("  ※ 이어달리기 된다 — 끝난 구조는 json 으로 남아 다음 실행에서 건너뛴다.")
+    print(f"플랫폼 {PLAT} · 상자 {CALV_BOX_NM} nm · {CALV_NSAVE*CALV_NFRAMES:,} 스텝")
+    print(f"구성체 {len(_items)} × 조합 {len(CALV_PAIRS)} × {CALV_N_PER} = "
+          f"{len(_items)*len(CALV_PAIRS)*CALV_N_PER}건 중 "
+          f"{CALV_MAX_RUNS or '전부'} 를 이번에 돌린다")
+    print("조합:", " · ".join(f"{a}↔{b}" for a, b in CALV_PAIRS), flush=True)
+    rows, t0, nrun = [], time.time(), 0
     for (ab, lk), sel in _items:
         r0 = CONS[(CONS.항체 == ab) & (CONS.링커 == lk)].iloc[0]
-        for kind, lst in sel.items():
-            b22s, expos, sweeps = [], [], []
-            for c in lst:
-                tag = f"{safe(ab)}__{safe(lk)}__{kind}__{c['태그']}"
+        _ref = [m for m in (sorted(glob.glob(f"{REFD(ab)}/ref_m[0-9].pdb"))
+                            or [f"{REFD(ab)}/ref.pdb"]) if os.path.isfile(m)]
+        pool = {"닫힘": [c["경로"] for c in sel.get("닫힘", [])],
+                "열림": [c["경로"] for c in sel.get("열림", [])],
+                "기준점": _ref}
+        for ka, kb in CALV_PAIRS:
+            for rep in range(CALV_N_PER):
+                if not (pool.get(ka) and pool.get(kb)): continue
+                if CALV_MAX_RUNS is not None and nrun >= CALV_MAX_RUNS: break
+                tag = f"{safe(ab)}__{safe(lk)}__{ka}-{kb}__{rep}"
+                fj = f"{OUT}/calvados/{tag}.json"
+                if os.path.isfile(fj):
+                    rows.append(json.load(open(fj))); continue
+                if not budget(3600, f"CALVADOS {tag}"): break
+                nrun += 1
+                pa = pool[ka][rep % len(pool[ka])]
+                pb = pool[kb][(rep + (1 if ka == kb else 0)) % len(pool[kb])]
                 w = f"/content/_calv/{tag}"
-                if os.path.isfile(f"{OUT}/calvados/{tag}.json"):
-                    j = json.load(open(f"{OUT}/calvados/{tag}.json"))
-                    b22s.append(j["B22"]); expos.append(j.get("노출", np.nan))
-                    sweeps.append(j.get("훑는부피", np.nan)); continue
-                if CALV_MAX_RUNS is not None and _nrun >= CALV_MAX_RUNS:
-                    break
-                if not budget(3600, f"CALVADOS {tag}"): break   # 남은 예산 확인
-                _nrun += 1
                 try:
-                    os.makedirs(w, exist_ok=True)
-                    run_calvados_pair(safe(ab)+"_"+safe(lk), r0.seq,
-                                      int(r0.b1), int(r0.b2), c["경로"], w, RES_CSV,
-                                      platform=_plat)
-                    t = md.load(f"{w}/data/{safe(ab)}_{safe(lk)}_com_traj.dcd",
-                                top=f"{w}/data/{safe(ab)}_{safe(lk)}_com_top.pdb")
-                    rr, gg = md.compute_rdf(t, pairs=[[0, 1]],
-                                            r_range=(0.5, CALV_BOX_NM/2),
-                                            bin_width=0.1)
-                    b = b22_from_rdf(rr, gg)
-                    b22s.append(b)
-                    os.makedirs(f"{OUT}/calvados", exist_ok=True)
-                    json.dump(dict(B22=b, 태그=c["태그"], 종류=kind,
-                                   도메인Rg=c["도메인Rg"]),
-                              open(f"{OUT}/calvados/{tag}.json", "w"))
-                    print(f"  {ab:<16} {lk:<12} {kind} {c['태그'][-8:]:>9} "
+                    specs = ([("A", ka, pa, r0)] if (ka == kb and pa == pb)
+                             else [("A", ka, pa, r0), ("B", kb, pb, r0)])
+                    b = run_calvados_dimer(w, specs, RES_CSV, platform=PLAT)
+                    rec = dict(항체=ab, 링커=lk, 조합=f"{ka}-{kb}", rep=rep,
+                               B22=round(b, 2))
+                    json.dump(rec, open(fj, "w")); rows.append(rec)
+                    print(f"  {ab:<14} {lk:<11} {ka}↔{kb:<4} "
                           f"B22 {b:>9.1f} nm³  [{(time.time()-t0)/60:.0f}분]", flush=True)
                 except Exception as e:
-                    print(f"  ★ {tag} 실패: {type(e).__name__}: {str(e)[:120]}")
+                    print(f"  ★ {tag} 실패: {type(e).__name__}: {str(e)[:400]}")
                 finally:
                     shutil.rmtree(w, ignore_errors=True)
-            if b22s:
-                rows.append(dict(항체=ab, 링커=lk, 종류=kind,
-                                 B22=round(float(np.mean(b22s)), 2),
-                                 B22_SD=round(float(np.std(b22s, ddof=1)), 2)
-                                 if len(b22s) > 1 else 0.0, n구조=len(b22s)))
-    _done = len(glob.glob(f"{OUT}/calvados/*.json"))
-    print(f"\n  누적 완료 구조 {_done}/{_tot}건 · 이번 실행 {_nrun}건 "
-          f"· {(time.time()-t0)/60:.0f}분")
-    if _nrun and CALV_MAX_RUNS is not None and _done < _tot:
-        print(f"  ★ 한 건당 약 {(time.time()-t0)/60/max(_nrun,1):.1f}분 걸렸다. "
-              f"남은 {_tot-_done}건이면 약 {(time.time()-t0)/60/max(_nrun,1)*(_tot-_done)/60:.1f}시간.")
-        print("    시간을 보고 CALV_MAX_RUNS 를 올리거나 None 으로 풀어라.")
     if rows:
-        W = pd.DataFrame(rows)
-        P = W.pivot_table(index=["항체", "링커"], columns="종류",
-                          values=["B22", "B22_SD"]).reset_index()
-        P.columns = ["_".join([c for c in t if c]).strip("_") for t in P.columns]
-        P = P.rename(columns={"B22_닫힘": "B22_닫힘", "B22_열림": "B22_열림",
-                              "B22_SD_열림": "B22_열림_SD"})
-        # 좌표 기반 열림분율을 붙인다 (ABangle 을 안 쓴다)
+        CB = pd.DataFrame(rows)
+        P = CB.pivot_table(index=["항체", "링커"], columns="조합",
+                           values="B22", aggfunc="mean").reset_index()
+        P = P.rename(columns={"닫힘-닫힘": "B22_닫힘", "열림-열림": "B22_열림",
+                              "닫힘-열림": "B22_교차"})
         if "열림_Rg" in FEAT.columns:
-            P = P.merge(FEAT[["항체", "링커", "열림_Rg"]].rename(
-                columns={"열림_Rg": "열림분율"}), on=["항체", "링커"], how="left")
+            P = P.merge(FEAT[["항체", "링커", "열림_Rg"]]
+                        .rename(columns={"열림_Rg": "열림분율"}),
+                        on=["항체", "링커"], how="left")
         P.to_csv(f"{OUT}/calvados.csv", index=False, encoding="utf-8-sig")
-        print(f"\n저장 {len(P)}행 → {OUT}/calvados.csv")
-        display(P)
+        print(f"\n저장 {len(P)}행 → {OUT}/calvados.csv"); display(P)
+        print("  ★ B22 가 음수일수록 잘 붙는다. 셋을 비교하라 —")
+        print("    B22_열림 < B22_교차 < B22_닫힘 이면 '열린 것끼리 잘 붙는다' 가 맞다.")
+        print("    기준점 조합은 **링커가 없는 분자**와의 비교다 (대조군).")
     else:
-        print("  ★ 성공한 시뮬레이션이 없다. 위 실패 메시지를 보라.")
+        print("  ★ 성공한 시뮬레이션이 없다. 위 전체 출력을 보라.")
+    print(f"  누적 {len(glob.glob(f'{OUT}/calvados/*.json'))}건 · "
+          f"이번 {nrun}건 · {(time.time()-t0)/60:.0f}분")
 elif RUN_CALVADOS:
     print("10절-A3 건너뜀 —",
-          "calvados 를 못 올렸다" if not HAVE_CALV else "고른 구조가 없다 (10절-A2 확인)")
+          "calvados 를 못 올렸다" if not HAVE_CALV else
+          "residues.csv 가 없다" if not RES_CSV else "고른 구조가 없다")
 ''')
 
 code(r'''
