@@ -47,6 +47,7 @@ ANALYSIS_MARKS = [
     # 10절은 RUN_CALVADOS=False 경로만 돈다 (설치·GPU 가 필요해 여기선 못 돌린다).
     # 그래도 **셀이 죽지 않는지**는 반드시 본다 — 스위치를 끈 경로가 제일 흔히 깨진다.
     ("# ── 10절-A ·",  "10절-A CALVADOS 입력"),
+    ("# ── 10절-A2 ·", "10절-A2 형태 고르기"),
     ("# ── 10절-B ·",  "10절-B 끈끈한 패치"),
     ("# ── 10절-C ·",  "10절-C 관측량 함수"),
     ("# ── 10절-D ·",  "10절-D 판정"),
@@ -298,6 +299,9 @@ def run(plant_composition=True, label="", iface_gamma=0.0):
     g["sh"] = lambda *a, **k: False
     g["RUN_CALVADOS"] = False          # 설치·GPU 없이 끈 경로만 시험한다
     g["CALV_PATCH_Q"] = 0.25
+    g["CALV_N_CLOSED"] = 3
+    g["CALV_N_OPEN"] = 3
+    g["CALV_OPEN_Q"] = 0.90
     g["CALV_TEMP"] = 298.15
 
     print("=" * 78)

@@ -221,6 +221,14 @@ CALV_TEMP    = 298.15 # K
 CALV_NCHAIN  = 2      # 2 = B22 용 한 쌍. 늘리면 묽은상 회합까지 본다
 CALV_STEPS   = 2_000_000
 CALV_PATCH_Q = 0.25   # '끈끈한 패치' = 소수성 상위 25% 표면 잔기
+# ★ 어떤 앙상블 구조를 강체로 넣을까 — 이게 10절에서 제일 중요한 선택이다.
+#   CALVADOS 3 은 접힌 부분을 **입력 구조로 구속**하므로, VH+VL 을 통째로 강체로
+#   두면 **어느 프레임을 넣느냐가 답을 정한다.** 그래서 닫힌 것과 열린 것을 둘 다
+#   넣고 섞는다 (아래 b22_mixture). 프레임을 여러 개 쓰는 이유는 잡음 바닥 때문이다 —
+#   구성체 간 차이가 프레임 선택 잡음보다 작으면 우리가 재는 것은 잡음이다.
+CALV_N_CLOSED = 3     # 닫힌 대표 구조 개수
+CALV_N_OPEN   = 3     # 열린 대표 구조 개수 (튀는 것들)
+CALV_OPEN_Q   = 0.90  # '열림' = 그 구성체 도메인Rg 의 상위 10%
 
 # ── 사전 등록 임계 — 결과 보기 전에 박는다 ─────────────────────────────────
 # 짝지음 판정 — **절대 dc** 로 한다. Δdc(기준점 대비)로 하면 기준점이 특이한 항체에서
@@ -4216,6 +4224,81 @@ else:
 ''')
 
 code(r'''
+# ── 10절-A2 · 어떤 앙상블 구조를 넣을까 — **좌표로 고른다** ────────────────
+# ★ ABangle 로 고르면 안 된다. 무성 오염되면 dc 가 실제 열림과 무관해진다
+#   (실측 rho(도메인Rg, |Δdc|) = +0.06). 진짜 열린 프레임이 '붙음' 으로,
+#   안 열린 프레임이 '열림' 으로 들어가 있었다. **좌표에서 직접 고른다.**
+def pick_conformers(ab, lk, n_closed=None, n_open=None, q=None):
+    """구성체 하나에서 닫힌 대표 구조와 열린 대표 구조를 고른다.
+
+    고르는 기준은 `도메인Rg` — CA 좌표에서 바로 나오므로 번호매김과 무관하다.
+    각 무리 안에서는 **골고루 퍼지게** 뽑는다 (분위수 등간격). 연속 프레임이
+    서로 복제인 경우가 많아서(실측에서 76% 가 |Δdc| 차이 0.5 미만) 이웃을
+    연달아 집으면 같은 구조를 여러 번 넣게 된다.
+    """
+    n_closed = CALV_N_CLOSED if n_closed is None else n_closed
+    n_open   = CALV_N_OPEN   if n_open   is None else n_open
+    q        = CALV_OPEN_Q   if q        is None else q
+    if not len(G):
+        return {}, "geom.csv 가 없다 — 5절-B 를 먼저 돌려라"
+    g = G[(G.항체 == ab) & (G.링커 == lk)].dropna(subset=["도메인Rg"])
+    if len(g) < (n_closed + n_open) * 2:
+        return {}, f"프레임이 {len(g)}개뿐이다"
+    g = g.sort_values("도메인Rg").reset_index(drop=True)
+    cut = float(g.도메인Rg.quantile(q))
+    op = g[g.도메인Rg >= cut]
+    cl = g[g.도메인Rg <= float(g.도메인Rg.quantile(0.5))]
+    def _spread(d, k):
+        if len(d) <= k: return d
+        idx = np.linspace(0, len(d) - 1, k).round().astype(int)
+        return d.iloc[np.unique(idx)]
+    sel = {"닫힘": _spread(cl, n_closed), "열림": _spread(op, n_open)}
+    out = {}
+    for kind, d in sel.items():
+        rows = []
+        for r in d.itertuples():
+            p = f"{OUT}/{ab}/flow/{r.태그}.pdb"
+            if os.path.isfile(p):
+                rows.append(dict(종류=kind, 태그=r.태그, 경로=p,
+                                 도메인Rg=round(float(r.도메인Rg), 2),
+                                 말단간=round(float(getattr(r, "말단간", np.nan)), 1)))
+        out[kind] = rows
+    n_ok = sum(len(v) for v in out.values())
+    return out, ("" if n_ok else "PDB 파일을 못 찾았다 — 4절 출력이 있나 확인하라")
+
+if RUN_CALVADOS:
+    CONF = {}
+    print("="*76); print("★ CALVADOS 에 넣을 구조 고르기 — 닫힌 것과 열린 것 둘 다")
+    print("="*76)
+    print("  기전이 '대부분은 얌전하고 일부만 열려서 붙는다' 이므로")
+    print("  닫힌 것만 재도 틀리고 열린 것만 재도 틀리다. **둘 다 재서 섞는다.**\n")
+    for r in CONS[~CONS.합성].drop_duplicates(["항체", "링커"]).itertuples():
+        sel, why = pick_conformers(r.항체, r.링커)
+        if why:
+            print(f"  {r.항체:<16} {r.링커:<12} 건너뜀 — {why}"); continue
+        CONF[(r.항체, r.링커)] = sel
+        _c = sel.get("닫힘", []); _o = sel.get("열림", [])
+        print(f"  {r.항체:<16} {r.링커:<12} 닫힘 {len(_c)}개 "
+              f"(Rg {min([x['도메인Rg'] for x in _c], default=0):.1f}"
+              f"~{max([x['도메인Rg'] for x in _c], default=0):.1f}) · "
+              f"열림 {len(_o)}개 "
+              f"(Rg {min([x['도메인Rg'] for x in _o], default=0):.1f}"
+              f"~{max([x['도메인Rg'] for x in _o], default=0):.1f})")
+    if CONF:
+        _gap = [max([x["도메인Rg"] for x in v.get("열림", [])], default=np.nan) -
+                min([x["도메인Rg"] for x in v.get("닫힘", [])], default=np.nan)
+                for v in CONF.values()]
+        _gap = [x for x in _gap if np.isfinite(x)]
+        print(f"\n  닫힘↔열림 도메인Rg 차이 중앙값 {np.median(_gap):.1f} Å")
+        print("  ★ 이 차이가 작으면 두 무리가 사실 같은 것이다 — 그때는 섞을 이유가 없고")
+        print("    B22 를 한 번만 재면 된다. 2~3 Å 미만이면 그렇게 보고하라.")
+        print(f"\n  총 시뮬레이션 {sum(len(v) for s in CONF.values() for v in s.values())}건 "
+              f"× 구성체당 수십 분. **먼저 한 구성체만 돌려 보라.**")
+else:
+    CONF = {}
+''')
+
+code(r'''
 # ── 10절-B · 끈끈한 패치 정의 — 무엇이 '붙을 면' 인가 ──────────────────────
 # ABodyBuilder2 기준 구조에서 **표면에 드러난 소수성 잔기**를 고른다.
 # 이것이 링커가 가릴 수도 있고 안 가릴 수도 있는 면이고, 다른 분자가 붙을 면이다.
@@ -4327,6 +4410,38 @@ def linker_sweep(pos, linker_idx):
     return float(np.mean([np.sqrt(max(float(np.linalg.det(
         np.cov((p[linker_idx]-p[linker_idx].mean(0)).T))), 0.0)) for p in pos]))
 
+def b22_mixture(f_open, b_cc, b_oo, b_co=None):
+    """닫힌 종과 열린 종이 섞여 있을 때의 **겉보기** B22.
+
+        B22_app = (1−f)²·B_cc + 2f(1−f)·B_co + f²·B_oo
+
+    ★ 선형 혼합이 아니다. B22 는 **쌍** 상호작용이라 조성에 2차로 들어간다.
+      (1−f)·B_cc + f·B_oo 로 쓰면 교차항이 통째로 빠져 틀린다.
+    b_co 를 모르면 **구간**을 준다 — 지어낸 한 값보다 정직하다.
+    """
+    f = float(f_open)
+    if not (0.0 <= f <= 1.0): raise ValueError(f"f_open 은 0~1: {f}")
+    b_cc, b_oo = float(b_cc), float(b_oo)
+    if b_co is None:
+        lo, hi = min(b_cc, b_oo), max(b_cc, b_oo)
+        return ((1-f)**2*b_cc + 2*f*(1-f)*lo + f**2*b_oo,
+                (1-f)**2*b_cc + 2*f*(1-f)*hi + f**2*b_oo)
+    return float((1-f)**2*b_cc + 2*f*(1-f)*float(b_co) + f**2*b_oo)
+
+def open_excess(f_open, b_cc, b_oo):
+    """열림이 더한 몫만 — f²·(B_oo − B_cc). 교차항을 B_cc 로 두는 **보수적** 읽기다.
+    '열린 것끼리 만나야만 추가 인력이 생긴다' 는 가정이고, 부호와 크기를 보는 데 쓴다."""
+    f = float(f_open)
+    if not (0.0 <= f <= 1.0): raise ValueError(f"f_open 은 0~1: {f}")
+    return float(f**2*(float(b_oo) - float(b_cc)))
+
+def conformer_noise(v):
+    """같은 구성체에서 **다른 프레임**을 넣었을 때의 흔들림 (SD).
+    구성체 간 차이가 이것보다 작으면 우리가 재는 것은 **프레임 선택 잡음**이다.
+    씨앗 반복과 같은 역할 — 분모가 없으면 분자를 못 읽는다."""
+    v = np.asarray(v, float); v = v[np.isfinite(v)]
+    return float(np.std(v, ddof=1)) if len(v) > 1 else np.nan
+
 def within_share(values, groups):
     """항체내몫 — **라벨 검정보다 먼저** 본다. 0.3 미만이면 링커가 아니라 항체를 잰다."""
     v = np.asarray(values, float); g = np.asarray(groups)
@@ -4337,7 +4452,7 @@ def within_share(values, groups):
     sb, sw = float(np.std(mu, ddof=1)), float(np.std(wi, ddof=1))
     return float(sw**2/(sb**2 + sw**2)) if (sb**2 + sw**2) > 1e-30 else np.nan
 
-print("10절 관측량 함수 준비 완료 (fvcalv.py 와 같은 코드 · 자체 시험 20/20)")
+print("10절 관측량 함수 준비 완료 (fvcalv.py 와 같은 코드 · 자체 시험 31/31)")
 ''')
 
 code(r'''
@@ -4367,6 +4482,60 @@ elif len(CALV):
     VC = pd.DataFrame(_v); display(VC)
     print("  각도 특징들이 0.20~0.29 여서 실패했다. 그 판정에는 라벨이 필요 없었고,")
     print("  지금도 필요 없다. 0.3 미만이면 **라벨 검정까지 가지 마라.**")
+
+    # ── 형태를 섞는다 — 기전을 수로 쓴다 ──────────────────────────────────
+    if {"B22_닫힘", "B22_열림", "열림분율"} <= set(CALV.columns):
+        print("\n" + "="*76)
+        print("★ 형태 혼합 — B22_app = (1−f)²B_cc + 2f(1−f)B_co + f²B_oo")
+        print("="*76)
+        print("  선형 혼합이 아니다. B22 는 쌍 상호작용이라 조성에 **2차**로 들어간다.")
+        print("  기전이 '열린 것끼리 붙는다' 면 지배항은 f²·B_oo 다.\n")
+        _m = []
+        for r in CALV.itertuples():
+            f = float(getattr(r, "열림분율", np.nan))
+            cc, oo = float(r.B22_닫힘), float(r.B22_열림)
+            if not all(np.isfinite([f, cc, oo])): continue
+            co = float(getattr(r, "B22_교차", np.nan))
+            if np.isfinite(co):
+                app, band = b22_mixture(f, cc, oo, co), ""
+            else:
+                lo, hi = b22_mixture(f, cc, oo)
+                app, band = (lo + hi)/2, f"[{lo:.0f}, {hi:.0f}]"
+            _m.append(dict(항체=r.항체, 링커=r.링커, 열림분율=round(f, 3),
+                           B22_닫힘=round(cc, 1), B22_열림=round(oo, 1),
+                           B22_겉보기=round(app, 1), 교차항구간=band,
+                           열림초과=round(open_excess(f, cc, oo), 1)))
+        MIX = pd.DataFrame(_m)
+        if len(MIX):
+            display(MIX)
+            if (MIX.교차항구간 != "").any():
+                print("  ※ 교차항 B_co 를 안 쟀다 — 구간으로 보고한다. 정확한 값이 필요하면")
+                print("    닫힌 것 하나 + 열린 것 하나를 **한 상자**에 넣고 따로 재라.")
+            _key = pd.MultiIndex.from_arrays([CALV.항체, CALV.링커])
+            for c in ("B22_겉보기", "열림초과"):
+                CALV[c] = MIX.set_index(["항체", "링커"])[c].reindex(_key).values
+            OBSV = OBSV + ["B22_겉보기", "열림초과"]
+            display(pd.DataFrame([
+                dict(관측량=c, 항체내몫=round(within_share(CALV[c].values,
+                                                     CALV.항체.values), 2))
+                for c in ("B22_겉보기", "열림초과")]))
+
+    # ── 프레임 선택 잡음 — 구성체 간 차이가 이것보다 커야 읽을 수 있다 ──────
+    if "B22_열림_SD" in CALV.columns and "B22_열림" in CALV.columns:
+        print("\n" + "="*76)
+        print("★ 프레임 선택 잡음 — 어느 구조를 넣었나가 답을 정한다")
+        print("="*76)
+        _fn = float(np.nanmedian(CALV.B22_열림_SD.values))
+        _w = CALV.B22_열림 - CALV.groupby("항체").B22_열림.transform("mean")
+        _bn = float(np.nanstd(_w.values, ddof=1))
+        print(f"  프레임 간 SD 중앙 {_fn:.1f} nm³  ·  항체 안 구성체 간 SD {_bn:.1f} nm³")
+        if _fn > 1e-12:
+            print(f"  비 = {_bn/_fn:.2f}")
+        if not (_fn > 1e-12 and _bn > 2*_fn):
+            print("  ★★ 구성체 간 차이가 프레임 선택 잡음의 2배를 못 넘는다.")
+            print("     지금 재고 있는 것은 **어느 프레임을 골랐나** 다. 프레임을 늘려라.")
+        else:
+            print("  구성체 간 차이가 프레임 잡음보다 충분히 크다 — 읽어도 된다.")
 
     _live = [r.관측량 for r in VC.itertuples() if r.항체내몫 >= 0.3]
     if not _live:

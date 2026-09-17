@@ -210,6 +210,19 @@ def populate(OUT, CONS):
                           계면_소수성=.42 + .02*i, 계면_소수성_SD=.004,
                           기준점_흔들림=.6 - .05*i, 기준점_흔들림_SD=.02, n모델=4))
     pd.DataFrame(iface).to_csv(f"{OUT}/interface.csv", index=False, encoding="utf-8-sig")
+    # ★ 가짜 calvados.csv — 10절-D 판정 경로를 실제로 태운다.
+    #   B22_닫힘 은 양수(밀어냄), B22_열림 은 음수(끈끈함) 로 두어 혼합식이
+    #   의미 있는 값을 내게 한다. 열림분율은 구성체마다 다르게 준다.
+    crow = []
+    for _, r in CONS.drop_duplicates(["항체", "링커"]).iterrows():
+        h = abs(hash((r.항체, r.링커))) % 97
+        crow.append(dict(항체=r.항체, 링커=r.링커,
+                         B22=80.0 - h, B22_무차원=0.9 - h/200,
+                         B22_닫힘=120.0 - h, B22_열림=-300.0 - 3*h,
+                         B22_열림_SD=18.0 + h/20,
+                         끈끈한면_노출=0.35 + h/400, 링커_훑는부피=1.2 + h/200,
+                         분자간접촉=12.0 + h/10, 열림분율=0.10 + (h % 30)/100))
+    pd.DataFrame(crow).to_csv(f"{OUT}/calvados.csv", index=False, encoding="utf-8-sig")
     pd.DataFrame([dict(항체=ab, ipTM=0.91, ipTM_SD=.01, pTM=.88, 계면PAE=4.0,
                        계면PAE_SD=.05, nH=120, nL=118, n모델=3)
                   for ab in sorted(CONS.항체.unique())]).to_csv(
@@ -274,6 +287,9 @@ def run(path, stop_on_error=True, over=None, empty=False):
         g["venv_be"] = lambda *a, **k: f"{tmp}/venv"
         g["N_SEED_REP"] = 0
         g["RUN_CALVADOS"] = False      # 설치·GPU 가 없다. 끈 경로만 탄다.
+        # ★ 그래도 10절-D 의 **판정 경로**는 돌려야 한다. 그래서 가짜 calvados.csv 를
+        #   미리 깔아 둔다 (populate 가 쓴다) — 혼합식·프레임잡음·항체내몫 분기가
+        #   한 번도 안 돌면 깨져도 모른다.
         g.update(over)                # ★ 호출자가 준 스위치가 마지막에 이긴다
 
     g = base_env(drive)

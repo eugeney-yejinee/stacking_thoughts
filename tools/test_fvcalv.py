@@ -6,10 +6,18 @@ import sys
 import numpy as np
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from fvcalv import (b22_from_pmf, b22_reduced, sticky_exposure, linker_sweep,
+from fvcalv import (b22_from_pmf, b22_reduced, b22_mixture, open_excess,
+                    conformer_noise, sticky_exposure, linker_sweep,
                     intermolecular_contacts, within_share)
 
 OK, BAD = [], []
+
+
+def _raises(fn):
+    try:
+        fn(); return False
+    except (ValueError, IndexError):
+        return True
 
 
 def check(name, cond, extra=""):
@@ -94,6 +102,32 @@ sb, sw = within_share(v_between, g), within_share(v_within, g)
 check("항체 간이 지배하면 몫이 작다", sb < 0.15, f"{sb:.3f}")
 check("항체 안이 지배하면 몫이 크다", sw > 0.85, f"{sw:.3f}")
 check("표본이 모자라면 NaN", not np.isfinite(within_share([1.0, 2.0], [0, 1])))
+
+# ── 7b. 두 형태 혼합 — 2차식이 맞나 ─────────────────────────────────────────
+print("\n[7b] 혼합 B22 — 선형이 아니라 2차식이어야 한다")
+CC, OO, CO = 100.0, -400.0, -50.0
+check("f=0 이면 닫힌 값", abs(b22_mixture(0.0, CC, OO, CO) - CC) < 1e-9)
+check("f=1 이면 열린 값", abs(b22_mixture(1.0, CC, OO, CO) - OO) < 1e-9)
+m = b22_mixture(0.5, CC, OO, CO)
+lin = 0.5 * CC + 0.5 * OO
+check("중간에서 선형과 다르다", abs(m - lin) > 1.0, f"2차 {m:.1f} vs 선형 {lin:.1f}")
+exact = 0.25 * CC + 2 * 0.25 * CO + 0.25 * OO
+check("2차식과 정확히 일치", abs(m - exact) < 1e-9, f"{m:.4f}")
+lo, hi = b22_mixture(0.3, CC, OO)            # b_co 를 모를 때 구간
+mid = b22_mixture(0.3, CC, OO, CO)
+check("교차항 구간이 실제값을 감싼다", lo <= mid <= hi, f"[{lo:.1f}, {hi:.1f}] ∋ {mid:.1f}")
+# 열림 초과분 — f² 스케일
+e1, e2 = open_excess(0.1, CC, OO), open_excess(0.2, CC, OO)
+check("초과분이 f² 로 큰다", abs(e2 / e1 - 4.0) < 1e-9, f"비 {e2/e1:.2f} (기대 4)")
+check("초과분 부호", e1 < 0, f"{e1:.2f} (열린 쪽이 끈끈하니 음수)")
+check("f 범위 밖은 거부",
+      _raises(lambda: b22_mixture(1.5, CC, OO)) and _raises(lambda: open_excess(-0.1, CC, OO)))
+
+# ── 7c. 프레임 선택 잡음 ────────────────────────────────────────────────────
+print("\n[7c] 프레임 선택 잡음 — 분모가 없으면 분자를 못 읽는다")
+check("SD 를 낸다", abs(conformer_noise([1.0, 3.0, 5.0]) - 2.0) < 1e-9)
+check("한 개면 NaN", not np.isfinite(conformer_noise([2.0])))
+check("NaN 은 걸러낸다", abs(conformer_noise([1.0, np.nan, 3.0, 5.0]) - 2.0) < 1e-9)
 
 # ── 8. 입력 검사 ────────────────────────────────────────────────────────────
 print("\n[8] 잘못된 입력은 조용히 넘어가지 않는다")

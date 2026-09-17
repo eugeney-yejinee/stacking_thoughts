@@ -171,7 +171,70 @@ def intermolecular_contacts(pos, idx_a, idx_b, cut=0.8):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. 라벨을 안 보는 사전점검 — 이 관측량이 링커를 재나 항체를 재나
+# 3. 두 형태의 혼합 — 열린 소수 집단이 붙는다는 기전을 수로 쓴다
+# ─────────────────────────────────────────────────────────────────────────────
+def b22_mixture(f_open, b_cc, b_oo, b_co=None):
+    """닫힌 종과 열린 종이 섞여 있을 때의 **겉보기** B22.
+
+        B22_app = (1−f)²·B_cc + 2f(1−f)·B_co + f²·B_oo
+
+    ★ 선형 혼합이 아니다. B22 는 **쌍** 상호작용이라 조성에 2차로 들어간다.
+      (1−f)·B_cc + f·B_oo 로 쓰면 틀린다 — 교차항 B_co 가 통째로 빠진다.
+
+    f_open  열린 분율. **좌표 기반**으로 잰 것을 써라 (ABangle 의 dc 는
+            무성 오염되면 실제 열림과 무관해진다 — 실측 rho +0.06 이었다).
+    b_cc    닫힌–닫힌 (nm³).  b_oo  열린–열린.  b_co  교차항.
+
+    b_co 를 안 주면 **구간**을 돌려준다 — 교차항은 두 동종항 사이 어딘가지만
+    (min, max) 밖으로는 잘 안 나간다. 지어낸 한 값을 주는 것보다 정직하다.
+    정확한 값이 필요하면 닫힌 것 하나 + 열린 것 하나를 한 상자에 넣고 따로 재라.
+
+    기전이 '열린 것끼리 붙는다' 면 지배항은 f²·B_oo 다. f=0.25 면 계수가 0.0625
+    로 작아 보이지만 B_oo 가 크게 음수면 이 항이 전체를 끌고 간다.
+    """
+    f = float(f_open)
+    if not (0.0 <= f <= 1.0):
+        raise ValueError(f"f_open 은 0~1 이어야 한다: {f}")
+    b_cc, b_oo = float(b_cc), float(b_oo)
+    if b_co is None:
+        lo, hi = (min(b_cc, b_oo), max(b_cc, b_oo))
+        return (round((1 - f) ** 2 * b_cc + 2 * f * (1 - f) * lo + f ** 2 * b_oo, 6),
+                round((1 - f) ** 2 * b_cc + 2 * f * (1 - f) * hi + f ** 2 * b_oo, 6))
+    return float((1 - f) ** 2 * b_cc + 2 * f * (1 - f) * float(b_co) + f ** 2 * b_oo)
+
+
+def open_excess(f_open, b_cc, b_oo):
+    """열림이 **더한** 몫만 떼어 본다:  B22_app(f) − B_cc.
+
+    b_co 를 모를 때도 부호와 크기를 볼 수 있는 축약형이다 (교차항을 두 동종항의
+    산술평균으로 두면 정확히 f²(B_oo−B_cc) 가 아니라 f(2−f)... 가 되므로,
+    여기서는 **교차항을 B_cc 로 두는 보수적 가정**을 쓴다 → f²·(B_oo − B_cc)).
+    즉 '열린 것끼리 만나야만 추가 인력이 생긴다' 는 가장 보수적인 읽기다.
+    """
+    f = float(f_open)
+    if not (0.0 <= f <= 1.0):
+        raise ValueError(f"f_open 은 0~1 이어야 한다: {f}")
+    return float(f ** 2 * (float(b_oo) - float(b_cc)))
+
+
+def conformer_noise(values_by_frame):
+    """같은 구성체에서 **다른 프레임**을 넣었을 때 값이 얼마나 흔들리나.
+
+    구조를 강체로 고정하면 '어느 프레임을 골랐나' 가 곧 답이 된다.
+    구성체 간 차이가 이 흔들림보다 작으면 우리가 재는 것은 **프레임 선택 잡음**이다.
+    씨앗 반복과 같은 역할을 한다 — 분모가 없으면 분자를 읽을 수 없다.
+
+    반환: (프레임간SD, 구성체수가 1일 때 nan)
+    """
+    v = np.asarray(values_by_frame, float)
+    v = v[np.isfinite(v)]
+    if len(v) < 2:
+        return float("nan")
+    return float(np.std(v, ddof=1))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. 라벨을 안 보는 사전점검 — 이 관측량이 링커를 재나 항체를 재나
 # ─────────────────────────────────────────────────────────────────────────────
 def within_share(values, groups):
     """항체내몫 = 항체내분산 / (항체간분산 + 항체내분산).
@@ -199,5 +262,6 @@ def within_share(values, groups):
     return float(sw ** 2 / tot) if tot > 1e-30 else float("nan")
 
 
-__all__ = ["b22_from_pmf", "b22_reduced", "sticky_exposure", "linker_sweep",
+__all__ = ["b22_from_pmf", "b22_reduced", "b22_mixture", "open_excess",
+           "conformer_noise", "sticky_exposure", "linker_sweep",
            "intermolecular_contacts", "within_share", "KB"]
