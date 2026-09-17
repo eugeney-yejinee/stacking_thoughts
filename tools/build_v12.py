@@ -1847,7 +1847,9 @@ EXPLORATORY = ["OCD5중앙", "OCD5_MAD", "링커접촉_잔기당"]     # 탐색 
 #   Holm 후 생존 없음. 그래도 남겨 둔다 — 설계가 바뀌면 다시 물을 축이다.)
 TAIL_FEATS  = ["OCD5_p90", "OCD5_p95", "OCD5_p99", "열림_dc4", "열림_dc6",
                "열림_dc10", "안붙음_심도", "붙음중_꼬리10", "붙음중_꼬리15",
-               "붙음중_꼬리20"]
+               "붙음중_꼬리20", "Rg중앙", "Rg_p90", "열림_Rg"]
+# ★ 좌표 기반 열림 임계 — 전체 프레임 도메인Rg 의 상위 25%. 6절에서 채운다.
+RG_OPEN_CUT = None
 BASELINE    = ["길이"]                                      # 증분 검정의 귀무모형
 GEN         = "BioEmu"
 
@@ -1884,6 +1886,44 @@ def paired(df):
         return (df["dc"] - DC0).abs() < PAIR_NSD * DC_SD
     return df["Δdc"].abs() < PAIR_DC
 
+def abangle_sane(df, dc_big=10.0, rg_slack=2.0):
+    """★★ ABangle 값이 **좌표와 같은 이야기를 하는가.** 프레임별 True/False.
+
+    왜 필요한가 — 이게 이 노트북에서 제일 위험한 실패다.
+    상류 `number_sequences` 에 zip 어긋남이 있어서 ANARCI 가 한 사슬만 인식하면
+    다른 사슬은 번호가 안 매겨진다. 그런데 `write_pair` 가 1..N 으로 빈틈없이
+    번호를 매기므로 **번호 없는 사슬도 coreset 35개를 그대로 채운다.**
+    → Superimposer 성공 → 여섯 개의 그럴듯하지만 **무의미한 실수**가 나온다.
+    오류가 안 나므로 조용히 통과한다. (검증 CLI 로 막았지만 그건 사슬 인식만 본다.)
+
+    실측에서 실제로 이랬다:
+      |Δdc| > 45 인 프레임의 도메인Rg 중앙 = 18.4 Å
+      |Δdc| < 2  인 프레임의 도메인Rg 중앙 = 17.6 Å
+    두 Ig 도메인(각 Rg≈13Å)의 중심이 54 Å 벌어지면 Rg 합은 √(13²+27²) = 30 Å 여야 한다.
+    17~18 Å 이 그대로 나왔다 = **안 벌어졌다.** 그런데 |ΔHL| 중앙이 106° 였다.
+    붙어 있는 도메인이 106도 비틀릴 수는 없다. 여섯 값이 **같이** 망가진 것이다.
+
+    더 나쁜 것은 방향이 뒤집힌다는 점이다 — 진짜로 열린 프레임(도메인Rg 23.6,
+    말단간 73 Å)이 Δdc 0.65 로 '붙음' 에 들어가 있었다.
+
+    판정: dc 가 크게 벗어났다고 말하는데 좌표는 그대로면 그 프레임을 버린다.
+    기준선은 **그 구성체의 얌전한 프레임**에서 잡는다 (항체마다 도메인 크기가 다르다).
+    """
+    if "도메인Rg" not in df.columns or df["도메인Rg"].isna().all():
+        return pd.Series(True, index=df.index)      # 좌표 기하가 없으면 검산 못 한다
+    adc = (df["dc"] - DC0).abs() if ("dc" in df.columns and df["dc"].notna().any()) \
+        else df["Δdc"].abs()
+    rg = pd.to_numeric(df["도메인Rg"], errors="coerce")
+    ok = pd.Series(True, index=df.index)
+    for _, idx in df.groupby(["항체", "링커"], sort=False).groups.items():
+        a, r = adc.loc[idx], rg.loc[idx]
+        base = r[a < 2.0].median()
+        if not np.isfinite(base):
+            base = r.median()
+        # dc 는 크게 벗어났다는데 좌표상 도메인은 그대로 → ABangle 이 거짓말이다
+        ok.loc[idx] = ~((a >= dc_big) & (r < base + rg_slack))
+    return ok
+
 def build_features(frames, geom, gen=GEN, pair_dc=PAIR_DC):
     """프레임 표 → 구성체당 한 줄."""
     Gf = frames[frames.생성기 == gen].copy()
@@ -1897,6 +1937,23 @@ def build_features(frames, geom, gen=GEN, pair_dc=PAIR_DC):
         #   기하가 섞여 들어온다 — 오류 없이 조용히 틀린 값이 된다.
         Gf = Gf.merge(geom.drop(columns=["링커"], errors="ignore"),
                       on=["항체", "태그"], how="left", validate="many_to_one")
+        # ★★ 좌표와 대조해 ABangle 이 망가진 프레임을 버린다. 병합 **뒤**여야 한다 —
+        #    도메인Rg 가 있어야 검산이 된다.
+        _sane = abangle_sane(Gf)
+        ABANGLE_DROP = int((~_sane).sum())
+        if ABANGLE_DROP:
+            print(f"  ★★ ABangle 이 좌표와 어긋나는 프레임 {ABANGLE_DROP}/{len(Gf)} "
+                  f"({ABANGLE_DROP/len(Gf):.0%}) 를 버린다.")
+            print("     dc 는 크게 벗어났다는데 도메인Rg 는 그대로인 프레임들이다 —")
+            print("     ANARCI 가 한 사슬만 인식했을 때 나오는 **무성 오염**이다.")
+            print("     (오류를 안 내므로 안 버리면 그대로 통계에 들어간다.)")
+            Gf = Gf[_sane].copy()
+        else:
+            print("  ABangle–좌표 검산 통과 — 버린 프레임 없다.")
+    global RG_OPEN_CUT
+    if "도메인Rg" in Gf.columns and Gf["도메인Rg"].notna().any():
+        RG_OPEN_CUT = float(np.nanpercentile(Gf["도메인Rg"].astype(float), 75))
+        print(f"  좌표 기반 열림 임계: 도메인Rg > {RG_OPEN_CUT:.1f} Å (전체 상위 25%)")
     meta = ([c for c in ("블록", "항체", "배향", "링커", "길이", "합성", "조성",
                          "설계길이") if c in Gf.columns]
             + [c for c in OBS if c in Gf.columns])      # ★ 실측 열 전부 (HC 만이 아니다)
@@ -1919,6 +1976,16 @@ def build_features(frames, geom, gen=GEN, pair_dc=PAIR_DC):
         #   만든다. 그러면 중앙값은 그 소수를 정의상 못 본다. 그래서 따로 잰다.
         #   ※ 실제로 이 앙상블은 이봉분포다 — 붙음 중앙 OCD5 ≈ 6, 안붙음 ≈ 70.
         #     게이트가 임의로 자른 게 아니라 실재하는 두 덩어리를 가른다.
+        # ── ★ ABangle 을 **안 거치는** 열림 지표 — 좌표에서 직접 온다 ──────────
+        #   ABangle 이 무성 오염되면 위의 짝지음/각도는 전부 못 믿는다.
+        #   도메인Rg 와 말단간은 CA 좌표에서 바로 나오므로 번호매김과 무관하다.
+        #   실측에서 rho(도메인Rg, 말단간) = +0.56 으로 물리적으로 맞고,
+        #   rho(도메인Rg, |Δdc|) = +0.06 으로 ABangle 의 dc 와는 무관했다.
+        if "도메인Rg" in g.columns and g["도메인Rg"].notna().any():
+            _rg = pd.to_numeric(g["도메인Rg"], errors="coerce").dropna().values
+            d["Rg중앙"] = float(np.median(_rg))
+            d["Rg_p90"] = float(np.percentile(_rg, 90))
+            d["열림_Rg"] = float((_rg > RG_OPEN_CUT).mean()) if RG_OPEN_CUT else np.nan
         _o = g["OCD5"].values.astype(float)
         for _p in (90, 95, 99):
             d[f"OCD5_p{_p}"] = float(np.nanpercentile(_o, _p))

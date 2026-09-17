@@ -166,6 +166,14 @@ def populate(OUT, CONS):
             for k in AB6:
                 dd[f"Δ{k}"] = rng.normal(0, AB_SD[k])
             dd["Δdc"] = rng.normal(0.1, 0.3 + 0.04*(r.길이 - 10))
+            # ★ 프레임 10개마다 하나씩 **ABangle 무성 오염을 심는다** — dc 는 크게
+            #   벗어났다고 말하는데 좌표(도메인Rg)는 그대로인 프레임. 실측에서 27% 가
+            #   이랬다. 안 심으면 abangle_sane 게이트가 한 번도 안 돌아서 깨져도 모른다.
+            _rot = (j % 10 == 3)
+            if _rot:
+                dd["Δdc"] = 50.0 + rng.normal(0, 2)
+                for k in AB6:
+                    if k != "dc": dd[f"Δ{k}"] = rng.normal(0, 40)
             dd["dc"] = 16.206 + dd["Δdc"]
             dd["OCD6"] = sum(abs(dd[f"Δ{k}"])/AB_SD[k] for k in AB6)
             dd["OCD5"] = sum(abs(dd[f"Δ{k}"])/AB_SD[k] for k in AB6 if k != "dc")
@@ -182,12 +190,15 @@ def populate(OUT, CONS):
                         "생산", "titer", "sec", "quantific", "supernatant")):
                     row[c] = r[c]
             frames.append(row)
+            # 오염 프레임은 좌표상 **멀쩡하다** (그게 이 사고의 정의다)
             geom.append(dict(항체=r.항체, 링커=r.링커, 태그=tag,
                              링커접촉_잔기당=12 + rng.normal(0, 1.5),
                              링커밀착율=0.6, 링커최근접=6.0,
                              링커Rg_잔기당=0.3, 링커신장도=0.6,
                              링커나선도=0.12 + rng.normal(0, .05),
-                             링커i_i4=11.0, 도메인Rg=18.0, 말단간=45.0))
+                             링커i_i4=11.0,
+                             도메인Rg=18.0 + (0.0 if _rot else rng.normal(0, 1.2)),
+                             말단간=45.0))
         json.dump(dict(요청=N_FRAMES, 저장=N_FRAMES, 잔존율=1.0),
                   open(f"{d}/{r.링커}__BioEmu.done", "w"))
     pd.DataFrame(frames).to_csv(f"{OUT}/frames.csv", index=False, encoding="utf-8-sig")
