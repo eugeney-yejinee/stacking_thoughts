@@ -753,14 +753,30 @@ def analyze(R, systems):
         say("  ★★ 씨앗이 1개다 — 잡음 분모가 없어 차분의 크기를 해석할 수 없다.")
 
     say("\n  ★ 항체내몫 — **y(HMW)를 보기 전에** 찍는다.")
-    say("    0.3 미만이면 그 관측값은 링커가 아니라 **항체 정체**를 재고 있다.")
+    say("    0.3 미만 = 그 관측값은 링커가 아니라 **항체 정체**를 재고 있다.")
+    say("    절대값과 차분을 **둘 다** 본다:")
+    say("      · pH3 절대값의 몫 — 이게 진짜 진단이다. 주 검정이 절대값을 쓴다.")
+    say("      · 차분(Δ)의 몫 — 차분은 pH 와 무관한 항체 항이 **정의상 상쇄되므로**")
+    say("        대개 1 에 가깝게 나온다. 높다고 좋은 축이라는 뜻이 아니다.")
+    abs3 = mean[mean.pH == 3.0].set_index(["항체", "링커"])
     ws = []
     for c in DCOL:
-        w = F.within_share(T[c].values, T.항체.values)
-        ws.append(dict(관측값=c, 항체내몫=round(w, 3) if np.isfinite(w) else np.nan,
-                       판정="사용" if (np.isfinite(w) and w >= 0.3) else "★버림"))
-    WS = pd.DataFrame(ws).sort_values("항체내몫", ascending=False)
+        base = c[1:]
+        w_d = F.within_share(T[c].values, T.항체.values)
+        if base in abs3.columns:
+            a = T.set_index(["항체", "링커"]).index.map(
+                lambda k: abs3[base].get(k, np.nan))
+            w_a = F.within_share(np.asarray(list(a), float), T.항체.values)
+        else:
+            w_a = np.nan
+        ws.append(dict(관측값=c,
+                       pH3절대_몫=round(w_a, 3) if np.isfinite(w_a) else np.nan,
+                       차분_몫=round(w_d, 3) if np.isfinite(w_d) else np.nan,
+                       판정="사용" if (np.isfinite(w_d) and w_d >= 0.3) else "★버림"))
+    WS = pd.DataFrame(ws).sort_values("차분_몫", ascending=False)
     say(WS.to_string(index=False))
+    say("    ※ '판정' 은 차분 기준이다 (탐색 목록을 정하는 데만 쓴다).")
+    say("      주 검정은 이 관문을 **안 거친다** — 사전등록됐기 때문이다.")
     live = [r.관측값 for r in WS.itertuples() if r.판정 == "사용"]
 
     say("\n  차분표:")
