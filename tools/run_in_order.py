@@ -206,6 +206,17 @@ def populate(OUT, CONS):
                              말단간=45.0))
         json.dump(dict(요청=N_FRAMES, 저장=N_FRAMES, 잔존율=1.0),
                   open(f"{d}/{r.링커}__BioEmu.done", "w"))
+    # ★ frames 엔 없고 **geom 에만 있는** 씨앗 반복을 심는다. 실측이 정확히 그랬다 —
+    #   BioEmu 는 rep2 를 만들었는데 기준점 ABangle 이 실패해 frames 에 안 들어갔다.
+    #   그래도 좌표 기하는 있으므로 잡음 바닥은 낼 수 있어야 한다.
+    _r0 = CONS.iloc[0]
+    for j in range(N_FRAMES):
+        geom.append(dict(항체=_r0.항체, 링커=f"{_r0.링커}__rep2",
+                         태그=f"{_r0.링커}__rep2__BioEmu_s{j}",
+                         링커접촉_잔기당=12 + rng.normal(0, 1.5), 링커밀착율=0.6,
+                         링커최근접=6.0, 링커Rg_잔기당=0.3, 링커신장도=0.6,
+                         링커나선도=0.12, 링커i_i4=11.0,
+                         도메인Rg=18.0 + rng.normal(0, 1.2), 말단간=45.0))
     pd.DataFrame(frames).to_csv(f"{OUT}/frames.csv", index=False, encoding="utf-8-sig")
     pd.DataFrame(geom).to_csv(f"{OUT}/geom.csv", index=False, encoding="utf-8-sig")
     for i, ab in enumerate(sorted(CONS.항체.unique())):

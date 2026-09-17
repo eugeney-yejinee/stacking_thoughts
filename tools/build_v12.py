@@ -2446,9 +2446,58 @@ if _rp:
         else:
             print("  → 실행 잡음이 구성체 간 흩어짐보다 충분히 작다. 링커 차이를 읽어도 된다.")
 else:
-    print("※ 씨앗 반복이 없다 — **BioEmu 의 잡음 바닥이 측정되지 않았다.**")
-    print("  4절의 N_SEED_REP 을 켜고 한 번 더 돌려라. 그것 없이는 링커 간 차이가")
-    print("  링커 때문인지 실행마다 달라서인지 구분할 방법이 없다 (구성체당 20분이면 된다).")
+    # ★★ frames.csv 에 씨앗 반복이 없어도 **geom.csv 에는 있을 수 있다.**
+    #   실측에서 정확히 그랬다 — BioEmu 가 rep2 프레임을 만들었는데 기준점 ABangle 이
+    #   실패해서 frames 에 한 줄도 안 들어갔다 ("쌍 PDB 0개 → 성공 0/0").
+    #   그런데 도메인Rg·말단간·링커 기하는 **좌표에서 바로** 나온다 — ABangle 도,
+    #   ANARCI 도, 번호매김도 안 거친다. 그러니 잡음 바닥은 여기서 낼 수 있다.
+    #   세션 내내 없다고 하던 분모가 사실 디스크에 있었다.
+    _rep_g = pd.DataFrame()
+    if len(G):
+        _gg = G.copy()
+        _gg["기준링커"] = _gg.링커.astype(str).str.replace(r"__rep\d+$", "", regex=True)
+        _gg["실행"] = np.where(_gg.링커.astype(str).str.contains("__rep"), "rep", "orig")
+        _n = _gg.groupby(["항체", "기준링커"]).실행.nunique()
+        _pairs = _n[_n >= 2].index
+        if len(_pairs):
+            _rep_g = _gg[_gg.set_index(["항체", "기준링커"]).index.isin(_pairs)]
+    if len(_rep_g):
+        print("※ frames.csv 엔 씨앗 반복이 없지만 **geom.csv 에는 있다** —")
+        print("  좌표 기하는 ABangle 을 안 거치므로 여기서 잡음 바닥을 낸다.")
+        GF = [c for c in ("도메인Rg", "말단간", "링커접촉_잔기당", "링커밀착율",
+                          "링커신장도", "링커Rg_잔기당") if c in _rep_g.columns]
+        _rows = []
+        for c in GF:
+            _m = (_rep_g.groupby(["항체", "기준링커", "실행"])[c]
+                  .median().unstack("실행").dropna())
+            if len(_m) < 1 or not {"orig", "rep"} <= set(_m.columns): continue
+            _d = (_m["rep"] - _m["orig"]).values
+            _run = float(np.sqrt(np.mean(_d**2)/2))       # 실행 간 SD
+            _bet = float(USE[c].std(ddof=1)) if c in USE.columns else np.nan
+            _rel = max(1 - (_run/_bet)**2, 0.0) if _bet and _bet > 1e-12 else np.nan
+            _rows.append(dict(특징=c, 실행간SD=round(_run, 3),
+                              구성체간SD=round(_bet, 3) if _bet == _bet else np.nan,
+                              신뢰도=round(_rel, 2) if _rel == _rel else np.nan,
+                              감쇠배율=round(np.sqrt(_rel), 2) if _rel == _rel else np.nan,
+                              n쌍=len(_m),
+                              판정=("★ 실행 잡음이 링커 차이만큼 크다" if _rel == _rel
+                                    and _rel < 0.5 else "쓸 만하다")))
+        if _rows:
+            SEEDN = pd.DataFrame(_rows); display(SEEDN)
+            print(f"  씨앗 반복 쌍 {len(_m)}개로 냈다. **실행 잡음이 분모다** —")
+            print("  구성체 간 흩어짐이 이것보다 작으면 우리가 재는 것은 링커가 아니라")
+            print("  BioEmu 를 두 번 돌린 차이다. 신뢰도 0.5 미만이면 그 특징은 못 쓴다.")
+            _bad = [r["특징"] for r in _rows if r["신뢰도"] == r["신뢰도"] and r["신뢰도"] < 0.5]
+            if _bad:
+                print(f"  ★★ 못 쓰는 특징: {_bad}")
+        else:
+            print("  ※ 짝이 맞는 씨앗 반복을 못 찾았다.")
+    else:
+        print("※ 씨앗 반복이 없다 — **BioEmu 의 잡음 바닥이 측정되지 않았다.**")
+        print("  4절의 N_SEED_REP 을 켜고 한 번 더 돌려라. 그것 없이는 링커 간 차이가")
+        print("  링커 때문인지 실행마다 달라서인지 구분할 방법이 없다 (구성체당 20분이면 된다).")
+        print("  ※ 이미 돌렸는데 여기까지 안 왔다면 5절 로그에서 '기준점 ABangle 실패' 를")
+        print("    찾아보라 — 프레임은 만들어졌는데 ABangle 이 못 재서 버려졌을 수 있다.")
 
 print(f"\n  ML 이 쓰는 것: 구성체 {len(USE)} · **독립 단위(항체) {USE[GROUP].nunique()}개** "
       f"· 블록 {sorted(USE.블록.unique())}")
