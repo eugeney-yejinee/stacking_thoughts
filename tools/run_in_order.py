@@ -92,7 +92,12 @@ def write_excel(path):
                 "Domain_1": H,
                 "Linker_1": "GGGGS" * (Ln // 5),
                 "Domain_2": L,
-                "HMW(%)": round(4 + 2*b + 0.6*(Ln - 15) + rng.normal(0, .5), 2),
+                # ★ 파국 구성체는 물질이 없어 **HMW 를 못 잰다** — NaN 이다.
+                #   실측이 정확히 그렇다 (블록3 Whitlow218). 이걸 안 심으면
+                #   8절 Stage B 의 NaN 처리 경로가 한 번도 안 돌아서,
+                #   sklearn 이 ValueError 를 내는 것을 시험이 못 잡는다.
+                "HMW(%)": (float("nan") if (b == 3 and i == 1) else
+                           round(4 + 2*b + 0.6*(Ln - 15) + rng.normal(0, .5), 2)),
                 "Monomer(%)": round(96 - 2*b - 0.6*(Ln - 15), 2),
                 # ★ 수율 열. 항체 사이는 크게(60배), 항체 안은 작게(±30%) —
                 #   실측의 구조 그대로다. 그리고 블록 3 의 두 번째 링커에

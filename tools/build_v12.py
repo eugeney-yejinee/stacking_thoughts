@@ -3903,15 +3903,32 @@ else:
     print("  그것은 6절-C 의 '조성 채널 없음' 과 같은 이야기다. 그때는 8절을 접어라.")
 
     # ── Stage B — 앙상블 기술자 → 실측. n=26, **여기는 안 늘어난다** ──────
+    # ★ 실측값이 **없는** 구성체가 있다. 그것은 결측이 아니라 **결과**다 —
+    #   블록3 Whitlow218 처럼 수율이 무너져 물질이 없으면 HMW 를 잴 수가 없다.
+    #   Stage A(라벨 불필요)에는 그대로 두고, 라벨이 필요한 Stage B 에서만 뺀다.
+    #   빼면서 **몇 개를 왜 뺐는지** 반드시 찍는다 — 조용히 빠지면 표본 수가
+    #   달라진 것을 아무도 모른다. (sklearn 은 NaN 타깃에 ValueError 를 낸다.)
     SB = None
-    if HC and len(USE) >= 6:
-        _c = [c for c in ALLF if USE[c].notna().all() and USE[c].std(ddof=1) > 1e-12]
+    USE_LAB = USE[pd.to_numeric(USE[HC], errors="coerce").notna()] if HC else USE.iloc[0:0]
+    _drop = len(USE) - len(USE_LAB)
+    if _drop:
+        print(f"\n  ※ 실측 {HC} 가 없는 구성체 {_drop}건을 Stage B 에서 뺀다:")
+        for r in USE[~USE.index.isin(USE_LAB.index)].itertuples():
+            print(f"     {getattr(r, GROUP):<18} {r.링커}")
+        print("     결측이 아니라 **결과**다 — 물질이 안 나오면 물성을 못 잰다.")
+        print("     6절-B 수율 파국 표와 같이 읽어라. Stage A 에는 그대로 남는다.")
+    if HC and len(USE_LAB) >= 6:
+        _c = [c for c in ALLF
+              if USE_LAB[c].notna().all() and USE_LAB[c].std(ddof=1) > 1e-12]
         if _c:
-            Yb = make_target(USE, HC, block=GROUP,
+            Yb = make_target(USE_LAB, HC, block=GROUP,
                              higher_is_worse=HIGHER_IS_WORSE).values
+            _ok = np.isfinite(Yb)
+            assert _ok.all(), "타깃에 아직 NaN 이 있다 — 필터가 샜다"
             SB = make_pipeline(StandardScaler(),
-                               RidgeCV(alphas=np.logspace(-2, 3, 24))).fit(USE[_c].values, Yb)
-            print(f"\nStage B 학습 표본: {len(USE)}건 — **합성 데이터로 늘릴 수 없다.**")
+                               RidgeCV(alphas=np.logspace(-2, 3, 24))).fit(
+                                   USE_LAB[_c].values, Yb)
+            print(f"\nStage B 학습 표본: {len(USE_LAB)}건 — **합성 데이터로 늘릴 수 없다.**")
             print(f"  쓰는 기술자: {_c}")
             print(f"  성능은 7절의 LOBO 일치도로 이미 냈다 (여기서 다시 안 낸다 — "
                   f"같은 데이터로 두 번 재면 낙관적으로 나온다).")
@@ -3938,19 +3955,30 @@ else:
         rng = np.random.default_rng(0)
         nB = 300
         # Stage B 부트스트랩 — 항체 단위로 재표집 (구성체 단위로 하면 낙관적이다)
-        gb = list(USE.groupby(GROUP).groups.values())
-        predsB = []
+        # ★ 라벨이 있는 행만 재표집한다 (Stage B 는 라벨이 필요하다)
+        gb = list(USE_LAB.groupby(GROUP).groups.values())
+        predsB, _bfail = [], 0
         for _ in range(nB):
             pick = np.concatenate([np.asarray(gb[i]) for i in
                                    rng.integers(0, len(gb), len(gb))])
-            d = USE.loc[pick]
+            d = USE_LAB.loc[pick]
             if d[_c].std(ddof=0).min() < 1e-12: continue
             yb = make_target(d, HC, block=GROUP, higher_is_worse=HIGHER_IS_WORSE).values
+            _m = np.isfinite(yb)
+            if _m.sum() < 6: continue
             try:
                 mB = make_pipeline(StandardScaler(),
-                                   RidgeCV(alphas=np.logspace(-2, 3, 12))).fit(d[_c].values, yb)
+                                   RidgeCV(alphas=np.logspace(-2, 3, 12))).fit(
+                                       d[_c].values[_m], yb[_m])
                 predsB.append(mB.predict(Cd[_c].values))
-            except Exception: pass
+            except Exception as e:
+                # ★ 조용히 삼키지 않는다. 몇 번 실패했는지 아래에서 찍는다 —
+                #   전부 실패하면 구간이 비는데 그걸 모르고 읽으면 안 된다.
+                _bfail += 1
+                if _bfail == 1:
+                    print(f"  ※ Stage B 부트스트랩 실패 1회: {type(e).__name__}: {e}")
+        if _bfail:
+            print(f"  ※ Stage B 부트스트랩 {_bfail}/{nB}회 실패 — 구간이 그만큼 얇다.")
         # Stage A 부트스트랩 — 구성체 단위 재표집
         predsA = []
         for _ in range(nB):
