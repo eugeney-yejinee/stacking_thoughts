@@ -575,11 +575,13 @@ def selftest():
                      min_iters=20, eq_ns=0.04)          # 평형 10스텝
             _, _, left = simulate(pc, plat, 60, ck, dd, 30, seed=1, resume=True,
                                   min_iters=20, eq_ns=0.04)
+            # ★ 프레임 수는 **여기서** 읽어야 한다. 두 번째 재개 뒤에 읽으면 그때 값이
+            #   나와서 시험이 틀린 것을 본다 (내가 처음에 그렇게 짜서 헛경보를 냈다).
+            import mdtraj as _md
+            nfr = _md.load(dd, top=f"{tmp}/ph7.4.pdb").n_frames if os.path.isfile(dd) else -1
             # 그리고 **더 길게** 요청하면 그만큼 더 돌아야 한다
             _, _, left2 = simulate(pc, plat, 120, ck, dd, 30, seed=1, resume=True,
                                    min_iters=20, eq_ns=0.04)
-            import mdtraj as _md
-            nfr = _md.load(dd, top=f"{tmp}/ph7.4.pdb").n_frames if os.path.isfile(dd) else -1
             nfr2 = _md.load(dd, top=f"{tmp}/ph7.4.pdb").n_frames if os.path.isfile(dd) else -1
             say(f"    같은 길이로 재개 → 남은 스텝 {left} (0 이어야) · 프레임 {nfr} (2 여야)")
             say(f"    두 배 길이로 재개 → 추가 {left2} 스텝 (60 이어야) · 프레임 {nfr2} (4 여야)")
