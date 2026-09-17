@@ -308,6 +308,8 @@ def run(plant_composition=True, label="", iface_gamma=0.0):
     g["CALV_BOX_NM"] = 30.0
     g["CALV_NSAVE"] = 1000
     g["CALV_NFRAMES"] = 1000
+    g["CALV_MAX_RUNS"] = 6
+    g["CALV_ONLY"] = None
     g["CALV_TEMP"] = 298.15
 
     print("=" * 78)

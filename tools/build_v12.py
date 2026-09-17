@@ -220,6 +220,10 @@ CALV_PH      = 7.4    # 전하 결정용
 CALV_TEMP    = 298.15 # K
 CALV_NCHAIN  = 2      # 2 = B22 용 한 쌍. 늘리면 묽은상 회합까지 본다
 CALV_STEPS   = 2_000_000
+# ★ 먼저 **몇 건만** 돌려 시간을 재라. 28구성체 × 6구조 = 168건이고, 2M 스텝짜리를
+#   CPU 로 하나씩 돌리면 며칠이다. None 이면 전부 — 시간을 재고 나서 풀어라.
+CALV_MAX_RUNS = 6     # 이번 실행에서 돌릴 최대 시뮬레이션 수 (None = 제한 없음)
+CALV_ONLY     = None  # 예: ("실측4_B1_LH", "G4S") 로 한 구성체만
 CALV_PATCH_Q = 0.25   # '끈끈한 패치' = 소수성 상위 25% 표면 잔기
 # ★ 어떤 앙상블 구조를 강체로 넣을까 — 이게 10절에서 제일 중요한 선택이다.
 #   CALVADOS 3 은 접힌 부분을 **입력 구조로 구속**하므로, VH+VL 을 통째로 강체로
@@ -4334,22 +4338,34 @@ else:
     #   패키지가 들고 있는 표를 그대로 쓰고, 못 찾으면 그 사실을 말하고 멈춘다.
     LAM, RES_CSV = None, None
     if HAVE_CALV:
-        try:
-            import calvados.data as _cd, os as _os, glob as _glob
-            _cand = _glob.glob(_os.path.join(_os.path.dirname(_cd.__file__), "*.csv"))
-            for _f in _cand:
+        # ★ `calvados.data` 에는 __init__.py 가 없다 → **네임스페이스 패키지**라
+        #   `calvados.data.__file__` 이 None 이다. 거기서 dirname 을 부르면
+        #   TypeError: expected str … not NoneType 가 난다 (실측에서 그랬다).
+        #   그래서 `calvados.__file__` 을 기준으로 찾는다.
+        import calvados as _cv, glob as _glob
+        _root = os.path.dirname(os.path.abspath(_cv.__file__))
+        _cand = (sorted(_glob.glob(f"{_root}/data/residues*.csv"))
+                 + sorted(_glob.glob(f"{_root}/data/*.csv"))
+                 + sorted(_glob.glob(f"{_root}/../residues*.csv"))
+                 + sorted(_glob.glob(f"{OUT}/residues*.csv")))
+        for _f in _cand:
+            try:
                 _t = pd.read_csv(_f)
-                _c = [c for c in _t.columns if str(c).lower() in ("lambdas", "lambda")]
-                _o = [c for c in _t.columns if str(c).lower() in ("one", "onelettercode", "resname")]
-                if _c and _o:
-                    LAM, RES_CSV = dict(zip(_t[_o[0]].astype(str),
-                                            _t[_c[0]].astype(float))), _f
-                    print(f"  λ 척도를 패키지에서 읽었다: {_os.path.basename(_f)} "
-                          f"({len(LAM)} 잔기) → {RES_CSV}")
-                    print(f"    열: {list(_t.columns)}")
-                    break
-        except Exception as e:
-            print(f"  λ 표 읽기 실패: {type(e).__name__}: {e}")
+            except Exception:
+                continue
+            _c = [c for c in _t.columns if str(c).lower() in ("lambdas", "lambda")]
+            _o = [c for c in _t.columns if str(c).lower() in ("one", "onelettercode")]
+            if _c and _o:
+                LAM, RES_CSV = dict(zip(_t[_o[0]].astype(str),
+                                        _t[_c[0]].astype(float))), os.path.abspath(_f)
+                print(f"  λ 척도: {os.path.basename(_f)} ({len(LAM)} 잔기) → {RES_CSV}")
+                print(f"    열: {list(_t.columns)}")
+                break
+        if LAM is None:
+            print(f"  ★ residues.csv 를 못 찾았다. 뒤진 곳: {_root}/data/ 등 {len(_cand)}개")
+            print(f"    아래 한 줄이면 받아진다 — {OUT} 에 두면 다음 실행부터 자동으로 읽는다:")
+            print(f"      !wget -qO {OUT}/residues.csv https://raw.githubusercontent.com"
+                  f"/KULL-Centre/CALVADOS/main/calvados/data/residues.csv")
     if HAVE_CALV and LAM is None:
         print("  ★★ λ 끈끈함 척도를 패키지에서 못 찾았다.")
         print("     **여기에 손으로 적어 넣지 마라** — 지어낸 척도로 낸 B22 는 숫자일 뿐이다.")
@@ -4688,8 +4704,15 @@ if RUN_CALVADOS and HAVE_CALV and CONF:
           f"{CALV_NSAVE*CALV_NFRAMES:,} 스텝 · Fv 강체 {CALV_RIGID_FV}")
     if _plat == "CPU":
         print("  ★ GPU 가 없다. 구성체 하나에 몇 시간 걸린다 — 먼저 한 건만 돌려 보라.")
-    rows, t0 = [], time.time()
-    for (ab, lk), sel in CONF.items():
+    rows, t0, _nrun = [], time.time(), 0
+    _items = [(k, v) for k, v in CONF.items()
+              if CALV_ONLY is None or k == tuple(CALV_ONLY)]
+    _tot = sum(len(v) for _, s_ in _items for v in s_.values())
+    print(f"  이번에 돌릴 것 {min(_tot, CALV_MAX_RUNS or _tot)}/{_tot}건"
+          + (f" (CALV_MAX_RUNS={CALV_MAX_RUNS})" if CALV_MAX_RUNS else "")
+          + (f" · CALV_ONLY={CALV_ONLY}" if CALV_ONLY else ""))
+    print("  ※ 이어달리기 된다 — 끝난 구조는 json 으로 남아 다음 실행에서 건너뛴다.")
+    for (ab, lk), sel in _items:
         r0 = CONS[(CONS.항체 == ab) & (CONS.링커 == lk)].iloc[0]
         for kind, lst in sel.items():
             b22s, expos, sweeps = [], [], []
@@ -4700,7 +4723,10 @@ if RUN_CALVADOS and HAVE_CALV and CONF:
                     j = json.load(open(f"{OUT}/calvados/{tag}.json"))
                     b22s.append(j["B22"]); expos.append(j.get("노출", np.nan))
                     sweeps.append(j.get("훑는부피", np.nan)); continue
+                if CALV_MAX_RUNS is not None and _nrun >= CALV_MAX_RUNS:
+                    break
                 if not budget(3600, f"CALVADOS {tag}"): break   # 남은 예산 확인
+                _nrun += 1
                 try:
                     os.makedirs(w, exist_ok=True)
                     run_calvados_pair(safe(ab)+"_"+safe(lk), r0.seq,
@@ -4728,6 +4754,13 @@ if RUN_CALVADOS and HAVE_CALV and CONF:
                                  B22=round(float(np.mean(b22s)), 2),
                                  B22_SD=round(float(np.std(b22s, ddof=1)), 2)
                                  if len(b22s) > 1 else 0.0, n구조=len(b22s)))
+    _done = len(glob.glob(f"{OUT}/calvados/*.json"))
+    print(f"\n  누적 완료 구조 {_done}/{_tot}건 · 이번 실행 {_nrun}건 "
+          f"· {(time.time()-t0)/60:.0f}분")
+    if _nrun and CALV_MAX_RUNS is not None and _done < _tot:
+        print(f"  ★ 한 건당 약 {(time.time()-t0)/60/max(_nrun,1):.1f}분 걸렸다. "
+              f"남은 {_tot-_done}건이면 약 {(time.time()-t0)/60/max(_nrun,1)*(_tot-_done)/60:.1f}시간.")
+        print("    시간을 보고 CALV_MAX_RUNS 를 올리거나 None 으로 풀어라.")
     if rows:
         W = pd.DataFrame(rows)
         P = W.pivot_table(index=["항체", "링커"], columns="종류",
