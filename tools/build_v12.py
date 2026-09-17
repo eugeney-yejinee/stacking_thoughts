@@ -1005,6 +1005,113 @@ if len(IF): display(IF)
 ''')
 
 code(r'''
+# ── 3절-B2 · ★ 앵커 스팬 r_ab 와 고정스팬 c_eff — **라벨이 필요 없다** ─────
+# 흔히 쓰는 c_eff ∝ N^-1.5 는 사슬 **양 끝이 자유로울 때**의 극한이다.
+# scFv 는 그게 아니다 — 닫힌 Fv 에서 링커가 이어야 할 두 부착점 거리 r_ab 가
+# 고정돼 있다. 그러면 c_eff 는 그 거리에서의 확률밀도다:
+#
+#     ⟨r²⟩ = n·l·b        c_eff ∝ P(r_ab) = (3/2π⟨r²⟩)^{3/2} · exp(−3r_ab²/2⟨r²⟩)
+#     최적 길이  n* = r_ab² / (l·b)
+#
+# l=3.5 Å(잔기당) · b=10 Å(Kuhn) 이면 r_ab=35 Å 에서 n* = 35 aa 다.
+# → **실측 링커 15~25 aa 는 전부 상승 가지에 있다. 길수록 c_eff 가 커진다.**
+#   15→25 배수: r=30 Å 에서 ×1.30 · 35 Å 에서 ×1.88 · 40 Å 에서 ×2.89.
+#   그런데 r_ab ≲ 26 Å 이면 꼭짓점이 창 안으로 들어와 **부호가 뒤집힌다**.
+#
+# 왜 이게 중요한가: 실측에서 LH 4항체가 전부 '그 블록의 **최단** 링커가 최악' 이었고
+# HL 1항체만 반대였다. 이 식은 그 반전이 일어날 조건을 **정량으로** 준다 —
+# 그 항체의 r_ab 가 26 Å 아래인가. CA 두 개만 재면 답이 나온다.
+#
+# ★ 라벨이 필요 없다 → 합성 패널에도 그대로 돌아가고 표본 제약을 안 받는다.
+KUHN_B, RES_L = 10.0, 3.5      # Å. 바꾸려면 여기서 바꾸고 아래 판정을 다시 읽어라
+A3_TO_M = 1661.0               # 1 Å⁻³ = 1661 M
+
+def anchor_span(ref_pdb, od="HL"):
+    """닫힌 Fv 에서 링커가 이어야 하는 두 CA 사이 거리 (Å).
+
+    배향 od 의 **첫 도메인 C말단 CA** → **둘째 도메인 N말단 CA**.
+    이 거리가 배향마다 다르다는 것이 'VH-링커-VL 과 VL-링커-VH 가 다르다' 의
+    구조적 정체다 — 같은 길이의 링커가 한쪽에서는 남고 한쪽에서는 모자란다.
+    """
+    st = first_model(ref_pdb)
+    if st is None:
+        return np.nan
+    ch = {c.id: [r for r in c if "CA" in r] for c in st}
+    d1, d2 = od[0], od[1]
+    if d1 not in ch or d2 not in ch or not ch[d1] or not ch[d2]:
+        return np.nan
+    return float(np.linalg.norm(ch[d1][-1]["CA"].coord - ch[d2][0]["CA"].coord))
+
+def c_eff_fixed(n_res, r_ab, b=None, l=None):
+    """고정 스팬에서의 실효농도 (M). n_res 는 링커 잔기 수."""
+    b = KUHN_B if b is None else b
+    l = RES_L if l is None else l
+    n_res = float(n_res); r_ab = float(r_ab)
+    if not (n_res > 0 and np.isfinite(r_ab) and r_ab > 0):
+        return np.nan
+    r2 = n_res * l * b
+    return float((3.0/(2*np.pi*r2))**1.5 * np.exp(-3.0*r_ab*r_ab/(2*r2)) * A3_TO_M)
+
+def n_star(r_ab, b=None, l=None):
+    """c_eff 를 최대로 만드는 링커 길이 (잔기).  n* = r_ab²/(l·b)"""
+    b = KUHN_B if b is None else b
+    l = RES_L if l is None else l
+    return float(r_ab*r_ab/(l*b)) if np.isfinite(r_ab) else np.nan
+
+SPAN_CSV = f"{OUT}/anchor_span.csv"
+SPAN = pd.read_csv(SPAN_CSV) if (REUSE_CSV and os.path.isfile(SPAN_CSV)) else pd.DataFrame()
+_have_sp = set(SPAN.항체) if len(SPAN) else set()
+_rows = []
+for ab in CONS.항체.unique():
+    if ab in _have_sp: continue
+    r0 = CONS[CONS.항체 == ab].iloc[0]
+    mods = [m for m in (sorted(glob.glob(f"{REFD(ab)}/ref_m[0-9].pdb")) or
+                        [f"{REFD(ab)}/ref.pdb"]) if os.path.isfile(m)]
+    if not mods:
+        print(f"  {ab:<22} 기준 구조 없음 — 건너뜀"); continue
+    v = [anchor_span(m, r0.배향) for m in mods]
+    v = [x for x in v if np.isfinite(x)]
+    if not v:
+        print(f"  {ab:<22} 앵커 CA 를 못 찾았다"); continue
+    _rows.append(dict(항체=ab, 배향=r0.배향, r_ab=round(float(np.mean(v)), 2),
+                      r_ab_SD=round(float(np.std(v, ddof=1)), 2) if len(v) > 1 else 0.0,
+                      n모델=len(v), n_star=round(n_star(float(np.mean(v))), 1)))
+if _rows:
+    SPAN = pd.concat([SPAN, pd.DataFrame(_rows)], ignore_index=True) if len(SPAN) \
+        else pd.DataFrame(_rows)
+    SPAN = SPAN.drop_duplicates("항체", keep="last")
+    SPAN.to_csv(SPAN_CSV, index=False, encoding="utf-8-sig")
+if len(SPAN):
+    print("="*76); print("★ 앵커 스팬 r_ab — 링커가 반드시 이어야 하는 거리"); print("="*76)
+    display(SPAN)
+    print(f"  ※ ABB2 4모델 평균. r_ab_SD 가 크면(≳2 Å) 기준 구조가 이 값을 잘 못 정한다.")
+    _rev = SPAN[SPAN.n_star < 25.0]
+    print(f"\n  n* = r_ab²/({RES_L}·{KUHN_B}).  n* 가 실측 창(15~25 aa)보다 크면")
+    print("  **길수록 더 닫힌다**(c_eff 상승). 창 안으로 들어오면 부호가 뒤집힌다.")
+    if len(_rev):
+        print(f"  ★★ n* < 25 인 항체: {list(_rev.항체)} — 이 항체들에서 링커 길이 효과의")
+        print("     **부호가 다를 것**으로 예측된다. 라벨을 안 보고 낸 예측이다.")
+    else:
+        print("  모든 항체가 n* > 25 — 전부 같은 부호를 예측한다. 실측에서 부호가")
+        print("  뒤집힌 항체가 있다면 이 기전으로는 설명이 안 된다는 뜻이다.")
+    # 구성체별 c_eff — 항체 안에서 링커마다 다르다 (= 항체내 변동이 있다)
+    _sp = SPAN.set_index("항체").r_ab
+    CEFF = CONS[["항체", "링커", "길이"]].drop_duplicates().copy()
+    CEFF["r_ab"] = CEFF.항체.map(_sp)
+    CEFF["c_eff_mM"] = [round(c_eff_fixed(n, r)*1e3, 3)
+                        for n, r in zip(CEFF.길이, CEFF.r_ab)]
+    CEFF = CEFF.dropna(subset=["c_eff_mM"])
+    if len(CEFF):
+        CEFF.to_csv(f"{OUT}/c_eff.csv", index=False, encoding="utf-8-sig")
+        display(CEFF.head(12))
+        _w = CEFF.groupby("항체").c_eff_mM.agg(["min", "max"])
+        print(f"  항체 안 c_eff 배수 중앙 "
+              f"{float((_w['max']/_w['min']).median()):.2f}배 → 항체내 변동이 있다.")
+        print("  ★ 예측: 항체별 |길이 기울기| 순위가 이 배수의 순위를 따라야 한다.")
+        print("    라벨을 안 쓰고 낸 순위 예측이므로 사전 등록할 수 있다.")
+''')
+
+code(r'''
 # ── 3절-C · AF2-Multimer ipTM — VH + VL 을 **두 사슬로** 준다 ───────────────
 # ★ 왜 ABodyBuilder2 로는 안 되는가. ABB2 는 항체 전용 모델이라 **짝지어진 Fv 를
 #   전제로 짓는다.** "이 둘이 서로 찾아가 붙을 것인가" 라는 질문 자체를 못 던진다.
