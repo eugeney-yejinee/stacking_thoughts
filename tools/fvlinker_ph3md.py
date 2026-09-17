@@ -1,47 +1,57 @@
 #!/usr/bin/env python3
-"""FvLinker · pH 3 풀림 파이프라인 — **밤새 돌려놓고 자는 용도**.
+"""FvLinker · pH 3 풀림 파이프라인 — 회사에서 **2~3시간 안에** 돌려 보는 용도.
 
-────────────────────────────────────────────────────────────────────────────
+════════════════════════════════════════════════════════════════════════════
 무엇을 하는가
-────────────────────────────────────────────────────────────────────────────
-  링커만 다른 scFv 구조  →  pH 7.4 와 pH 3.0 에서 각각 MD
+════════════════════════════════════════════════════════════════════════════
+  링커만 다른 scFv 구조  →  pH 7.4 와 pH 3.0 에서 각각 MD (씨앗 반복 포함)
                          →  두 궤적의 **차분**에서 무엇이 드러나는지 잰다
-                         →  드러난 끈끈한 면의 크기로 HMW 높음/낮음을 **순위**로 예측
+                         →  드러난 끈끈한 면의 크기로 항체 **안에서** HMW 순위를 예측
 
-왜 차분인가:
+왜 차분인가
   100 ns 로는 도메인이 안 풀린다 (실제 언폴딩은 ms 이상). "풀렸나" 를 보면
   아무 일도 안 일어난 것처럼 보이고 잘못된 결론이 난다. 재야 하는 것은
   **pH 7 대비 pH 3 에서 무엇이 달라졌나** 다 — 끊어진 염다리, 풀린 계면
   가장자리, 링커가 옮겨간 자리, 그래서 새로 드러난 소수성 면.
 
-왜 두 분자를 안 넣는가:
-  Smoluchowski 로 쪼개면 k_assoc = k_encounter × P_stick 인데, 만남 빈도는
-  링커가 바뀌어도 거의 안 변한다 (k∝R·D, D∝1/R). 변하는 건 **붙을 확률**이고
-  그건 드러난 끈끈한 면으로 정해진다 — **한 분자 계산**이다. 전원자 회합 PMF 는
-  쌍당 약 44 GPU-일이라 애초에 불가능하다.
+왜 두 분자를 안 넣는가
+  k_assoc = k_encounter × P_stick 인데 만남 빈도는 링커가 바뀌어도 거의 안
+  변한다 (k ∝ R·D, D ∝ 1/R). 변하는 건 **붙을 확률**이고 그건 드러난 끈끈한
+  면으로 정해진다 — **한 분자 계산**이다. 전원자 회합 PMF 는 쌍당 약 44 GPU-일.
 
-────────────────────────────────────────────────────────────────────────────
-밤새 돌리기 위한 장치
-────────────────────────────────────────────────────────────────────────────
-  · **사전점검 먼저** — 짧게 한 번 돌려 배선을 확인하고 **시간을 추정해서 찍는다.**
-    이 프로젝트는 한 줄짜리 설정 버그로 실행을 세 번 날렸다. 다시는 안 그런다.
-  · **체크포인트 + 재개** — Colab 은 12~24시간에 끊긴다. 다시 실행하면 이어서 간다.
-  · **계마다 끝나는 즉시 저장** — 중간에 죽어도 거기까지는 건진다.
-  · **조용히 틀리지 않는다** — 이황화 개수, pH별 순전하, 플랫폼을 매번 찍고 검산한다.
+════════════════════════════════════════════════════════════════════════════
+관측 패널 — Δ소수성SASA 하나로는 얇다
+════════════════════════════════════════════════════════════════════════════
+  A. 노출 (붙을 확률)    SAP_max · SAP_sum · 최대연속패치 · 소수성SASA
+  B. 계면 (f 항)         VH-VL 접촉수 · 염다리수 · Rg
+  C. 링커 (c 항)         링커노출(가림) · 링커Re · 링커Rg
+  D. 분모               씨앗간 SD · 블록 표류(수렴) · **항체내몫**
 
-────────────────────────────────────────────────────────────────────────────
-설치 (Colab)
-────────────────────────────────────────────────────────────────────────────
-    pip install pdb2pqr propka pdbfixer mdtraj
-    pip install "openmm[cuda12]"      # ★ GPU 박스에서만. conda 필요 없다. CUDA 12 전용
+  ★ 항체내몫을 **y(HMW)를 보기 전에** 전 관측값에 대해 찍는다. 0.3 미만이면
+    그 관측값은 링커가 아니라 항체 정체를 재고 있다 — 지금까지 이 프로젝트의
+    모든 축이 거기서 죽었다. 살아남은 것만 HMW 와 대조한다.
 
-실행:
-    python3 fvlinker_ph3md.py                 # 전부 자동
-    python3 fvlinker_ph3md.py --preflight     # 사전점검만 하고 멈춘다
-    python3 fvlinker_ph3md.py --ns 50         # 계당 프로덕션 길이 (기본 20 ns)
+════════════════════════════════════════════════════════════════════════════
+사용법
+════════════════════════════════════════════════════════════════════════════
+    # ① 먼저 이것만. GPU 도 Drive 도 필요 없다. CPU 에서 4~6분.
+    python3 fvlinker_ph3md.py --selftest
+
+    # ② 진짜 구조로 배선 확인 + 시간 추정. 본 실행은 안 한다.
+    python3 fvlinker_ph3md.py --preflight
+
+    # ③ 본 실행. 주어진 시간에 맞춰 **스스로 규모를 정하고 버린 것을 찍는다.**
+    python3 fvlinker_ph3md.py --budget-hours 3
+
+    # 끊기면 같은 명령을 다시. 체크포인트에서 이어간다.
+
+설치 (Colab):
+    pip install pdbfixer mdtraj openpyxl
+    pip install "openmm[cuda12]"       # ★ GPU 박스에서만. conda 불필요. CUDA 12 전용
 """
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import os
@@ -51,49 +61,90 @@ import time
 
 import numpy as np
 
-# ── 설정 ────────────────────────────────────────────────────────────────────
-DRIVE = os.environ.get("FVL_DRIVE", "/content/drive/MyDrive/FvTwist")
-IN = f"{DRIVE}/input"
-OUT = os.environ.get("FVL_OUT", f"{DRIVE}/fvflow")   # ★ build_v12.py 와 같은 경로.
-                                                     #   이름이 FvLinker 여도 안 바꾼다
-WORK = f"{OUT}/ph3md"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-PH_LIST = [7.4, 3.0]               # 이 둘의 **차분**이 신호다
-PROD_NS = 20.0                     # 계당 프로덕션 (--ns 로 바꾼다)
-DT_PS = 0.004                      # 4 fs (수소질량 재분배)
-SAVE_PS = 20.0                     # 프레임 저장 간격
-EQ_NS = 0.2                        # 평형화
+# ── 경로 ────────────────────────────────────────────────────────────────────
+DRIVE = os.environ.get("FVL_DRIVE", "/content/drive/MyDrive/FvTwist")
+IN = os.environ.get("FVL_IN", f"{DRIVE}/input")
+OUT = os.environ.get("FVL_OUT", f"{DRIVE}/fvflow")   # ★ build_v12.py 와 같은 경로.
+WORK = f"{OUT}/ph3md"                                 #   이름이 FvLinker 여도 안 바꾼다
+
+# ── 시뮬레이션 상수 ─────────────────────────────────────────────────────────
+PH_LIST = [7.4, 3.0]          # 이 둘의 **차분**이 신호다
+DT_PS = 0.004                 # 4 fs — 수소질량 재분배 + HBonds 구속
+SAVE_PS = 20.0                # 프레임 저장 간격
+EQ_NS = 0.2
+MIN_ITERS = 2000
 PAD_NM = 1.0
 IONIC_M = 0.05
 TEMP_K = 300.0
-PREFLIGHT_STEPS = 500
-MAX_SYSTEMS = 0                    # 0 = 제한 없음
+OBS_KEYS = ("hmw", "monomer", "단량체", "purity", "순도")
 
 W = 78
+
+
+_FF_CACHE = {}
+
+
+def get_ff(ffpair):
+    """★ ForceField 를 **한 번만** 만든다. charmm36_2024.xml 은 16.9 MB 라 생성에
+    5.7초가 걸리는데, 예전에는 prepare() 를 부를 때마다 새로 만들었다 —
+    구성체 19 × pH 2 × 씨앗 2 = 76회면 그것만 7분이다."""
+    from openmm.app import ForceField
+    k = tuple(ffpair)
+    if k not in _FF_CACHE:
+        _FF_CACHE[k] = ForceField(*k)
+    return _FF_CACHE[k]
+
+
+def save_json(obj, path):
+    """★ 원자적으로 쓴다. 이 파일은 **완료된 계 전부**를 담고 있어서, 쓰는 도중에
+    Colab 이 끊기면 지금까지 돌린 몇 시간이 통째로 날아간다. 임시 파일에 다 쓰고
+    이름만 바꾼다 — rename 은 같은 파일시스템에서 원자적이다."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, ensure_ascii=False, indent=1)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def load_json(path):
+    """깨진 json 을 만나면 **조용히 빈 값으로 시작하지 않는다** — 크게 알린다."""
+    if not os.path.isfile(path):
+        return {}
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except Exception as e:
+        bad = path + ".corrupt"
+        os.replace(path, bad)
+        print(f"  ★★ {os.path.basename(path)} 가 깨졌다 ({type(e).__name__}). "
+              f"{os.path.basename(bad)} 로 옮기고 처음부터 간다.", flush=True)
+        return {}
+
+
 def head(t, c="="):
     print("\n" + c * W); print(t); print(c * W, flush=True)
 def say(*a):
     print(*a, flush=True)
 
 
-# ── [0] 환경 ────────────────────────────────────────────────────────────────
-def env():
+# ════════════════════════════════════════════════════════════════════════════
+# [0] 환경
+# ════════════════════════════════════════════════════════════════════════════
+def env(force_cpu=False):
     head("[0] 환경", "─")
-    mods = {}
     for m in ("openmm", "pdbfixer", "mdtraj"):
         try:
-            mods[m] = __import__(m)
-            v = getattr(mods[m], "__version__", None) or \
-                getattr(getattr(mods[m], "version", None), "version", "?")
+            mod = __import__(m)
+            v = getattr(mod, "__version__", None) or \
+                getattr(getattr(mod, "version", None), "version", "설치됨")
             say(f"  ✔ {m} {v}")
         except Exception as e:
             say(f"  ✗ {m} 없음 ({type(e).__name__})")
-            mods[m] = None
-    missing = [m for m, v in mods.items() if v is None]
-    if missing:
-        say(f"\n  ★ 설치가 필요하다:  pip install {' '.join(missing)}")
-        say("     GPU 를 쓰려면:    pip install \"openmm[cuda12]\"")
-        raise SystemExit(1)
+            say(f"\n  ★ 설치:  pip install pdbfixer mdtraj openpyxl")
+            say('     GPU:    pip install "openmm[cuda12]"')
+            raise SystemExit(1)
 
     import openmm as om
     names = []
@@ -102,316 +153,660 @@ def env():
             om.Platform.getPlatformByName(n); names.append(n)
         except Exception:
             pass
-    plat = names[0] if names else "Reference"
+    plat = "CPU" if force_cpu else (names[0] if names else "Reference")
     say(f"  등록 플랫폼 {names} → **{plat}**")
-    if plat in ("CPU", "Reference"):
+    if plat in ("CPU", "Reference") and not force_cpu:
         say("  ★★ GPU 가 안 잡혔다. CPU 로는 계당 며칠 걸린다.")
-        say("     Colab 런타임을 GPU 로 바꾸고  pip install \"openmm[cuda12]\"  해라.")
-        say("     (그래도 계속 돌리려면 --force-cpu 를 줘라)")
-        if "--force-cpu" not in sys.argv:
-            raise SystemExit(1)
+        say('     Colab 런타임을 GPU 로 바꾸고  pip install "openmm[cuda12]"  해라.')
+        say("     (그래도 계속 가려면 --force-cpu)")
+        raise SystemExit(1)
 
-    # 힘장 — ★ 이 짝이 맞아야 한다. charmm36_2024.xml 은 charmm36/water.xml 과 안 맞는다
+    # ★ 힘장 짝이 맞아야 한다. charmm36_2024.xml 은 charmm36/water.xml 과 **안 맞는다**
+    #   (RuntimeError). C36m = par_all36m_prot.prm 를 쓰는 charmm36_2024 쪽이다.
+    #   무질서 링커를 다루므로 C36m 이 아니면 링커가 인위적으로 뭉친다.
     from openmm.app import ForceField
     for pair in (("charmm36_2024.xml", "charmm36_2024/water.xml"),
                  ("charmm36.xml", "charmm36/water.xml")):
         try:
-            ForceField(*pair); say(f"  힘장 **{pair[0]}** + {pair[1]}"); return plat, pair
+            ForceField(*pair)
+            note = "C36m — 무질서 영역용" if "2024" in pair[0] else "★ 구판 C36 (링커가 뭉칠 수 있다)"
+            say(f"  힘장 **{pair[0]}** + {pair[1]}   {note}")
+            return plat, pair
         except Exception as e:
             say(f"  ✗ {pair[0]} + {pair[1]} → {type(e).__name__}")
     raise SystemExit("★ 쓸 수 있는 CHARMM 힘장이 없다")
 
 
-# ── [1] 구조 찾기 ───────────────────────────────────────────────────────────
-def find_structures():
-    """Drive 에서 (항체, 링커) 별 시작 구조를 찾는다.
+# ════════════════════════════════════════════════════════════════════════════
+# [1] 구조와 라벨
+# ════════════════════════════════════════════════════════════════════════════
+def read_excel():
+    """엑셀 → (항체후보키, 링커) 별 링커서열과 HMW. 없으면 빈 표로 계속 간다.
 
-    1순위: {OUT}/{항체}/flow/{링커}__BioEmu_s*.pdb  (구성체별로 있다 — 링커가 다르다)
-    2순위: {OUT}/{항체}/ref*.pdb                    (ABodyBuilder2 기준 구조)
-    BioEmu 는 **뼈대만** 준다 → pdbfixer 가 곁사슬을 다시 붙인다.
+    링커 **서열**이 필요하다 — 궤적에서 링커 구간을 서열로 찾기 때문이다.
+    잔기 번호나 사슬 나눔에 기대면 조용히 엉뚱한 자리를 집는다.
     """
+    import pandas as pd
+    c = (sorted(glob.glob(f"{IN}/*test_result*.xls*"))
+         or sorted(glob.glob(f"{IN}/*.xls*")))
+    if not c:
+        say(f"  엑셀 ★없음 ({IN}) — 링커 구간과 HMW 없이 간다")
+        return pd.DataFrame(columns=["링커", "링커서열", "HMW", "블록"])
+    X = pd.read_excel(c[-1]); X.columns = [str(s).strip() for s in X.columns]
+    col = lambda p: next((k for k in X.columns if k.lower().replace(" ", "") == p), None)
+    nm = col("이름") or col("name") or col("sample") or X.columns[0]
+    blk = col("block") or col("블록")
+    lc = sorted([k for k in X.columns if k.lower().replace(" ", "").startswith("linker")],
+                key=lambda k: int("".join(f for f in k if f.isdigit()) or 0))
+    hm = next((k for k in X.columns if "hmw" in k.lower()), None)
+    rows = []
+    for _, r in X.iterrows():
+        seq = next((str(r[k]).strip().upper() for k in lc
+                    if isinstance(r[k], str) and len(str(r[k]).strip()) >= 5), "")
+        rows.append(dict(링커=str(r[nm]).strip().rsplit("_", 1)[-1], 링커서열=seq,
+                         블록=re.sub(r"\.0$", "", str(r[blk])) if blk else "1",
+                         HMW=pd.to_numeric(r[hm], errors="coerce") if hm else np.nan))
+    d = pd.DataFrame(rows)
+    say(f"  엑셀     {os.path.basename(c[-1])} — 링커 {d.링커.nunique()}종"
+        + (f" · HMW 열 '{hm}'" if hm else " · ★HMW 열 없음"))
+    return d
+
+
+def find_structures(lab):
+    """{OUT}/<항체>/flow/<링커>__BioEmu_s*.pdb  (없으면 <항체>/ref*.pdb)."""
     head("[1] 시작 구조", "─")
     found = []
     for abdir in sorted(glob.glob(f"{OUT}/*/")):
         ab = os.path.basename(abdir.rstrip("/"))
-        if ab in ("ph3md", "calvados", "input"):
+        if ab in ("ph3md", "calvados", "input", "fig"):
             continue
-        bes = sorted(glob.glob(f"{abdir}flow/*__BioEmu_s*.pdb"))
         by = {}
-        for p in bes:
-            lk = os.path.basename(p).split("__BioEmu")[0]
-            by.setdefault(lk, []).append(p)
+        for p in sorted(glob.glob(f"{abdir}flow/*__BioEmu_s*.pdb")):
+            by.setdefault(os.path.basename(p).split("__BioEmu")[0], []).append(p)
         for lk, ps in sorted(by.items()):
-            found.append(dict(항체=ab, 링커=lk, pdb=ps[0], 출처="BioEmu", 뼈대만=True))
+            found.append(dict(항체=ab, 링커=lk, pdb=ps[0], 출처="BioEmu"))
         if not by:
-            refs = sorted(glob.glob(f"{abdir}ref*.pdb"))
-            if refs:
-                found.append(dict(항체=ab, 링커="ref", pdb=refs[0],
-                                  출처="ABB2", 뼈대만=False))
+            for p in sorted(glob.glob(f"{abdir}ref*.pdb"))[:1]:
+                found.append(dict(항체=ab, 링커="ref", pdb=p, 출처="ABB2"))
     if not found:
-        say(f"  ★ {OUT} 아래에서 PDB 를 하나도 못 찾았다.")
-        say("    찾아본 곳: {OUT}/<항체>/flow/<링커>__BioEmu_s*.pdb 와 {OUT}/<항체>/ref*.pdb")
-        say("    경로가 다르면 이 파일 맨 위의 OUT 을 고쳐라.")
+        say(f"  ★ {OUT} 아래에서 PDB 를 못 찾았다.")
+        say(f"    찾아본 곳: {OUT}/<항체>/flow/<링커>__BioEmu_s*.pdb")
+        say(f"               {OUT}/<항체>/ref*.pdb")
+        say("    경로가 다르면 환경변수로:  FVL_OUT=/실제/경로 python3 fvlinker_ph3md.py …")
         raise SystemExit(1)
-    say(f"  구성체 {len(found)}개 · 항체 {len({f['항체'] for f in found})}개")
-    for f in found[:8]:
-        say(f"    {f['항체']:22s} {f['링커']:12s} {f['출처']:7s} "
-            f"{os.path.basename(f['pdb'])}")
-    if len(found) > 8:
-        say(f"    … 외 {len(found)-8}개")
-    if MAX_SYSTEMS:
-        found = found[:MAX_SYSTEMS]
-    return found
+
+    seqmap = dict(zip(lab.링커, lab.링커서열)) if len(lab) else {}
+    hmwmap = dict(zip(lab.링커, lab.HMW)) if len(lab) else {}
+    for f in found:
+        f["링커서열"] = seqmap.get(f["링커"], "")
+        f["HMW"] = float(hmwmap.get(f["링커"], np.nan))
+
+    # 항체 안에서 링커가 2종 이상인 것만 — 그게 검정 가능한 유일한 대조다
+    from collections import Counter
+    cnt = Counter(f["항체"] for f in found)
+    keep = [f for f in found if cnt[f["항체"]] >= 2]
+    say(f"  구성체 {len(found)} · 항체 {len(cnt)}")
+    say(f"  **링커 2종 이상 항체 {len({f['항체'] for f in keep})}개 / 구성체 {len(keep)}개**"
+        f" 가 검정 대상 (나머지 {len(found)-len(keep)}개는 항체내 대조가 없어 제외)")
+    noseq = [f"{f['항체']}/{f['링커']}" for f in keep if not f["링커서열"]]
+    if noseq:
+        say(f"  ★ 링커 서열을 못 찾은 구성체 {len(noseq)}개 — 링커 관측값은 NaN 이 된다:")
+        say(f"    {noseq[:6]}")
+    return keep or found
 
 
-# ── [2] 준비 — 여기가 조용히 틀리는 자리다 ──────────────────────────────────
-def prepare(pdb_in, ph, ffpair, out_pdb):
+# ════════════════════════════════════════════════════════════════════════════
+# [2] 준비 — 조용히 틀리는 자리
+# ════════════════════════════════════════════════════════════════════════════
+def prepare(pdb_in, ph, ffpair, pad_nm=None, solvate=True):
     """수소 제거 → pH별 양성자화 → 용매화. 검산값을 함께 돌려준다.
 
-    ★ 수소를 **먼저 전부 지운다.** OpenMM 의 createDisulfideBonds 는 HG 가 없는
-      Cys 만 이황화 후보로 본다. 수소 붙은 PDB 를 넣으면 scFv 이황화가 **오류 없이
-      전부 사라진다.** scFv 는 도메인당 이황화가 있으니 그 MD 는 통째로 쓰레기가 된다.
+    ★ 수소를 **먼저 전부 지운다.** createDisulfideBonds 는 HG 가 없는 Cys 만
+      이황화 후보로 본다. 수소 붙은 PDB 를 넣으면 scFv 이황화가 오류 없이
+      전부 사라진다 — scFv 는 도메인당 이황화가 있으니 그 MD 는 쓰레기가 된다.
 
-    ★ Modeller.addHydrogens(pH=3.0) 은 Asp/Glu 를 실제로 중성화한다 (hydrogens.xml
-      의 maxph=4.4). His 만 건드린다는 통설은 틀렸다. 다만 pH ≤ 4.4 **전역 계단함수**라
-      환경 민감도가 없다 — pH 3.0 에서는 거의 모든 Asp/Glu pKa 아래라 맞고,
+    ★ addHydrogens(pH=3.0) 은 Asp/Glu 를 실제로 중성화한다 (hydrogens.xml 의
+      maxph=4.4). His 만 건드린다는 통설은 틀렸다. 다만 pH ≤ 4.4 **전역 계단**이라
+      환경 민감도가 없다 — pH 3.0 은 거의 모든 Asp/Glu pKa 아래라 맞고,
       pH 4~5 였다면 틀렸을 것이다.
     """
     from openmm import unit
-    from openmm.app import PDBFile, ForceField, Modeller, element
+    from openmm.app import (HBonds, Modeller, NoCutoff, PDBFile, PME, element)
     from pdbfixer import PDBFixer
 
     fx = PDBFixer(filename=pdb_in)
     fx.findMissingResidues()
+    fx.findNonstandardResidues()
+    fx.replaceNonstandardResidues()
+    fx.removeHeterogens(keepWater=False)      # ★ 물·리간드를 **수소 처리 전에** 뺀다
     fx.findMissingAtoms()
-    fx.addMissingAtoms()                       # BioEmu 뼈대 → 곁사슬 복원
-    fx.removeHeterogens(keepWater=False)
+    fx.addMissingAtoms()                      # BioEmu 뼈대 → 곁사슬 복원
 
-    ff = ForceField(*ffpair)
+    ff = get_ff(ffpair)
     m = Modeller(fx.topology, fx.positions)
     m.delete([a for a in m.topology.atoms() if a.element == element.hydrogen])  # ★ 필수
     m.addHydrogens(ff, pH=float(ph))
 
     ss = sum(1 for b in m.topology.bonds()
-             if b[0].name == "SG" and b[1].name == "SG")
+             if getattr(b[0], "name", "") == "SG" and getattr(b[1], "name", "") == "SG")
     nres = m.topology.getNumResidues()
+    seq_top = m.topology
 
-    m.addSolvent(ff, model="tip3p", padding=PAD_NM * unit.nanometer,
-                 neutralize=True, ionicStrength=IONIC_M * unit.molar)
-    sysm = ff.createSystem(m.topology, nonbondedMethod=__import__(
-        "openmm.app", fromlist=["PME"]).PME, nonbondedCutoff=1.0 * unit.nanometer,
-        constraints=__import__("openmm.app", fromlist=["HBonds"]).HBonds,
-        rigidWater=True, hydrogenMass=1.5 * unit.amu)
-    # 단백질 순전하 검산 — pH 3 에서 강하게 양수여야 한다
+    if solvate:
+        m.addSolvent(ff, model="tip3p",
+                     padding=(PAD_NM if pad_nm is None else pad_nm) * unit.nanometer,
+                     neutralize=True, ionicStrength=IONIC_M * unit.molar)
+        sysm = ff.createSystem(m.topology, nonbondedMethod=PME,
+                               nonbondedCutoff=1.0 * unit.nanometer, constraints=HBonds,
+                               rigidWater=True, hydrogenMass=1.5 * unit.amu)
+    else:
+        # ★ 진공. **자체시험 전용**이다 — 물을 안 채우므로 배선만 확인하고 물리는 못 믿는다.
+        #   addSolvent 59s + createSystem 31s 가 이 계에서 준비 시간의 절반을 넘는다.
+        sysm = ff.createSystem(m.topology, nonbondedMethod=NoCutoff,
+                               constraints=HBonds, hydrogenMass=1.5 * unit.amu)
     nb = next(f for f in sysm.getForces() if f.__class__.__name__ == "NonbondedForce")
-    prot = {a.index for a in m.topology.atoms()
-            if a.residue.name not in ("HOH", "NA", "CL", "WAT")}
+    prot = [a.index for a in m.topology.atoms()
+            if a.residue.name not in ("HOH", "WAT", "NA", "CL", "SOD", "CLA")]
     q = sum(nb.getParticleParameters(i)[0].value_in_unit(unit.elementary_charge)
             for i in prot)
-    with open(out_pdb, "w") as fh:
-        PDBFile.writeFile(m.topology, m.positions, fh)
     return dict(topology=m.topology, positions=m.positions, system=sysm,
-                atoms=sysm.getNumParticles(), ss=ss, q=round(q, 1), nres=nres)
+                atoms=sysm.getNumParticles(), ss=ss, q=round(float(q), 1), nres=nres,
+                protein_top=seq_top)
 
 
-def simulate(prep, plat, steps, chk, dcd, report_every, resume=True,
-             min_iters=2000, eq_ns=None):
+def simulate(prep, plat, steps, chk, dcd, every, seed=0, resume=True,
+             min_iters=MIN_ITERS, eq_ns=EQ_NS):
     """돌리고 **프로덕션 구간만의 초 수**를 같이 돌려준다.
 
-    ★ 시간 추정은 프로덕션 스텝만으로 해야 한다. 최소화와 평형은 계당 한 번뿐인데
+    ★ 시간 추정은 프로덕션만으로 해야 한다. 최소화·평형은 계당 한 번뿐인데
       CPU 에서는 그게 전체의 대부분이라, 같이 재면 추정이 몇 배 부풀려진다.
     """
-    from openmm import unit, LangevinMiddleIntegrator, MonteCarloBarostat, Platform
-    from openmm.app import Simulation, DCDReporter, CheckpointReporter
+    from openmm import (LangevinMiddleIntegrator, MonteCarloBarostat, Platform, unit)
+    from openmm.app import CheckpointReporter, DCDReporter, Simulation
 
-    eq = EQ_NS if eq_ns is None else eq_ns
     sysm = prep["system"]
-    sysm.addForce(MonteCarloBarostat(1 * unit.bar, TEMP_K * unit.kelvin, 25))
+    # ★ 진공(비주기)계에 barostat 을 붙이면 OpenMM 이 죽는다. 주기 상자가 있을 때만.
+    if sysm.usesPeriodicBoundaryConditions() and not any(
+            f.__class__.__name__ == "MonteCarloBarostat" for f in sysm.getForces()):
+        sysm.addForce(MonteCarloBarostat(1 * unit.bar, TEMP_K * unit.kelvin, 25))
     integ = LangevinMiddleIntegrator(TEMP_K * unit.kelvin, 1 / unit.picosecond,
                                      DT_PS * unit.picoseconds)
-    sim = Simulation(prep["topology"], sysm, integ,
-                     Platform.getPlatformByName(plat))
+    integ.setRandomNumberSeed(int(seed) + 1)
+    sim = Simulation(prep["topology"], sysm, integ, Platform.getPlatformByName(plat))
     done = 0
     if resume and chk and os.path.isfile(chk):
         try:
             sim.loadCheckpoint(chk)
             done = int(sim.context.getStepCount())
-            say(f"      체크포인트에서 이어간다 ({done:,} 스텝 완료)")
+            say(f"        체크포인트 재개 ({done:,} 스텝 완료)")
         except Exception as e:
-            say(f"      ★ 체크포인트를 못 읽었다 ({type(e).__name__}) — 처음부터")
+            say(f"        ★ 체크포인트를 못 읽었다 ({type(e).__name__}) — 처음부터")
             done = 0
     if done == 0:
         sim.context.setPositions(prep["positions"])
         sim.minimizeEnergy(maxIterations=min_iters)
-        sim.context.setVelocitiesToTemperature(TEMP_K * unit.kelvin)
-        if eq > 0:
-            sim.step(int(eq * 1000 / DT_PS))
+        sim.context.setVelocitiesToTemperature(TEMP_K * unit.kelvin, int(seed) + 1)
+        if eq_ns > 0:
+            sim.step(int(eq_ns * 1000 / DT_PS))
     left = max(0, steps - done)
     t0 = time.time()
     if left:
         if dcd:
-            sim.reporters.append(DCDReporter(dcd, report_every, append=os.path.isfile(dcd)))
+            sim.reporters.append(DCDReporter(dcd, every, append=os.path.isfile(dcd)))
         if chk:
-            sim.reporters.append(CheckpointReporter(chk, max(1000, report_every)))
+            # ★ 체크포인트 간격을 **DCD 와 똑같이** 둔다. 두 리포터가 같은 스텝에서
+            #   같이 발화하므로 재개했을 때 프레임 수와 스텝 수가 어긋나지 않는다.
+            #   예전에는 max(1000, every) 였는데, 그러면 (a) 짧은 실행은 체크포인트가
+            #   아예 안 써지고 (b) 긴 실행은 DCD 가 체크포인트보다 앞서 나가
+            #   재개할 때 프레임이 중복된다.
+            sim.reporters.append(CheckpointReporter(chk, every))
         sim.step(left)
-    return sim, (time.time() - t0), left
+    # ★ 끝에서 한 번 더 저장한다. 안 하면 마지막 구간이 날아가고, 다 끝난 계를
+    #   다시 실행했을 때 처음부터 또 돈다.
+    if chk:
+        try:
+            sim.saveCheckpoint(chk)
+        except Exception as e:
+            say(f"        ★ 마지막 체크포인트 저장 실패: {type(e).__name__}")
+    return sim, time.time() - t0, left
 
 
-# ── [5] 관측 — pH 7 대비 pH 3 의 차분 ───────────────────────────────────────
-def observe(top_pdb, dcd, linker_span=None):
-    """궤적 → 노출 면적. 소수성 SASA 가 응집 핵의 크기를 대신한다."""
+# ════════════════════════════════════════════════════════════════════════════
+# [3] 관측
+# ════════════════════════════════════════════════════════════════════════════
+def measure(top_pdb, dcd, linker_seq=""):
+    """궤적 → 관측 패널. fvobs 의 시험된 함수만 쓴다."""
     import mdtraj as md
+    import fvobs as F
+
     t = md.load(dcd, top=top_pdb)
     t = t.atom_slice(t.topology.select("protein"))
-    sasa = md.shrake_rupley(t, mode="residue")          # (frame, residue) nm²
-    HPHO = set("ALA VAL LEU ILE PHE MET TRP PRO TYR CYS".split())
-    res = list(t.topology.residues)
-    hyd = np.array([r.name in HPHO for r in res])
-    per = sasa.mean(axis=0)
-    out = dict(
-        총SASA=float(per.sum()),
+    if t.n_frames == 0:
+        raise ValueError("프레임이 0개다 — 저장 간격이 프로덕션보다 길지 않은지 봐라")
+
+    s = F.sap(t)
+    area, patch = F.largest_patch(t)
+    nsb, _ = F.salt_bridges(t)
+    rel = F.rel_exposure(t)
+    per = md.shrake_rupley(t, mode="residue").mean(axis=0)
+    hyd = np.array([F.BLACK_MOULD.get(r.name.upper(), 0.5) - 0.5 > 0
+                    for r in t.topology.residues])
+    o = dict(
+        SAP_max=float(np.nanmax(s)) if np.isfinite(s).any() else float("nan"),
+        SAP_sum=float(np.nansum(np.clip(s, 0, None))),
+        최대연속패치=float(area),
         소수성SASA=float(per[hyd].sum()),
-        소수성비=float(per[hyd].sum() / max(per.sum(), 1e-9)),
-        최대노출소수성=float(per[hyd].max()) if hyd.any() else float("nan"),
-        Rg=float(md.compute_rg(t).mean()),
-        n프레임=int(t.n_frames), n잔기=int(len(res)),
+        총SASA=float(per.sum()),
+        염다리수=int(nsb),
+        Rg=float(md.compute_rg(t).mean()) * 10.0,          # Å
+        n프레임=int(t.n_frames), n잔기=int(t.n_residues),
+        평균노출=float(np.nanmean(rel)),
     )
-    out["잔기별"] = [round(float(v), 4) for v in per]
-    return out
+    # 링커 관련 — 서열로 구간을 찾는다. 못 찾으면 **NaN 으로 두고 왜인지 남긴다**
+    span = F.find_span(F.traj_sequence(t), (linker_seq or "").strip().upper())
+    if span and patch:
+        lo, hi = span
+        lk = list(range(lo, hi))
+        o["링커노출"] = float(F.linker_shield(t, patch, lk))
+        re_, rg_ = F.chain_dims(t, lk)
+        o["링커Re"] = re_; o["링커Rg"] = rg_
+        o["링커구간"] = f"{lo}-{hi}"
+    else:
+        o["링커노출"] = o["링커Re"] = o["링커Rg"] = float("nan")
+        o["링커구간"] = ("서열 못 찾음" if not span else "패치 없음")
+    # 수렴 — Rg 의 블록 표류
+    o["Rg표류"] = float(F.block_drift(md.compute_rg(t)))
+    return o
 
 
-# ── 본체 ────────────────────────────────────────────────────────────────────
-def main(argv):
-    global PROD_NS
-    if "--ns" in argv:
-        PROD_NS = float(argv[argv.index("--ns") + 1])
-    only_pre = "--preflight" in argv
+# ════════════════════════════════════════════════════════════════════════════
+# [4] 자체 시험 — GPU 도 Drive 도 없이 전 경로를 검증한다
+# ════════════════════════════════════════════════════════════════════════════
+def selftest():
+    head("자체 시험 — 내장 소형계로 전 경로를 확인한다 (GPU·Drive 불필요)", "=")
+    import shutil
+    import tempfile
+
+    import openmm.app as app
+    plat, ffpair = env(force_cpu=True)
+    tmp = tempfile.mkdtemp(prefix="fvl_selftest_")
+    try:
+        src = os.path.join(os.path.dirname(app.__file__), "data", "test.pdb")
+        if not os.path.isfile(src):
+            say(f"  ★ OpenMM 의 시험 구조를 못 찾았다: {src}"); return 1
+        pdb = app.PDBFile(src)
+        m = app.Modeller(pdb.topology, pdb.positions)
+        m.deleteWater()
+        m.delete([a for a in m.topology.atoms()
+                  if a.residue.name in ("CL", "NA", "SOD", "CLA")])
+        p0 = f"{tmp}/mini.pdb"
+        with open(p0, "w") as fh:
+            app.PDBFile.writeFile(m.topology, m.positions, fh)
+        say(f"  시험계: villin 조각, 잔기 {m.topology.getNumResidues()}")
+
+        # ★ 자체시험은 **배선 확인**이지 물리가 아니다. 상자를 작게(0.45 nm), 최소화를
+        #   짧게(20회) 하고 **물을 안 채운다**. 물을 채우면 이 계에서만
+        #   addSolvent 59s + createSystem 31s 라 pH 하나에 750초가 걸려서 아무도 안 돌린다.
+        #   물리는 못 믿지만 배선(양성자화·이황화·관측·재개)은 전부 밟는다.
+        qs, ok, preps = {}, True, {}
+        for ph in PH_LIST:
+            t0 = time.time()
+            say(f"  pH {ph} 준비 중… (이 계에서 1~2분)")
+            p = prepare(p0, ph, ffpair, solvate=False)
+            qs[ph] = p["q"]; preps[ph] = p0
+            top = f"{tmp}/ph{ph}.pdb"
+            with open(top, "w") as fh:
+                app.PDBFile.writeFile(p["topology"], p["positions"], fh)
+            dcd = f"{tmp}/ph{ph}.dcd"
+            _, ps, _ = simulate(p, plat, 120, None, dcd, 30, seed=1, resume=False,
+                                min_iters=20, eq_ns=0.0)
+            o = measure(top, dcd, linker_seq="")
+            say(f"  pH {ph}: 원자 {p['atoms']:,} · 순전하 {p['q']:+.1f} · "
+                f"이황화 {p['ss']} · 프레임 {o['n프레임']} · "
+                f"SAP_max {o['SAP_max']:+.2f} · 패치 {o['최대연속패치']:.2f} nm² · "
+                f"염다리 {o['염다리수']}  ({time.time()-t0:.0f}s)")
+
+        dq = qs[3.0] - qs[7.4]
+        say(f"\n  ★ 양성자화 검산: pH 7.4 → {qs[7.4]:+.1f} · pH 3.0 → {qs[3.0]:+.1f}"
+            f"  (차이 **{dq:+.1f}**)")
+        if dq < 2:
+            say("    ★★ 실패 — pH 3 에서 전하가 안 올랐다. Asp/Glu 가 중성화되지 않았다.")
+            ok = False
+        else:
+            say("    ✔ Asp/Glu 가 실제로 중성화된다 — 진짜 pH 3 조건이다.")
+
+        # 체크포인트 재개 경로도 여기서 한 번 밟아 본다 — 본 실행에서 처음 만나면 늦다
+        say("\n  체크포인트 재개 경로:")
+        try:
+            # prepare() 가 이 계에서 ~60초라 두 번 더 부르면 자체시험이 2분 늘어난다.
+            # 같은 prep 으로 Simulation 만 두 번 만들면 재개 경로는 그대로 밟힌다.
+            ck = f"{tmp}/rs.chk"; dd = f"{tmp}/rs.dcd"
+            pc = prepare(p0, 7.4, ffpair, solvate=False)
+            simulate(pc, plat, 60, ck, dd, 30, seed=1, resume=False, min_iters=20, eq_ns=0.0)
+            _, _, left = simulate(pc, plat, 60, ck, dd, 30, seed=1, resume=True,
+                                  min_iters=20, eq_ns=0.0)
+            import mdtraj as _md
+            nfr = _md.load(dd, top=f"{tmp}/ph7.4.pdb").n_frames if os.path.isfile(dd) else -1
+            say(f"    재개 후 남은 스텝 {left} (0 이어야 한다) · DCD 프레임 {nfr} "
+                f"(2 여야 한다 — 중복 없이)")
+            good = (left == 0) and (nfr == 2)
+            say("    " + ("✔ 재개가 정확하다 — 중간에 끊겨도 이어서 간다" if good
+                          else "★★ 재개가 어긋난다. 끊기면 결과가 망가진다"))
+            ok = ok and good
+        except Exception as e:
+            say(f"    ★ 재개 실패: {type(e).__name__}: {e}"); ok = False
+
+        say("\n  관측 함수 자체 시험:")
+        r = os.system(f"{sys.executable} "
+                      f"{os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_fvobs.py')}"
+                      f" > {tmp}/obs.log 2>&1")
+        tail = open(f"{tmp}/obs.log").read().strip().rsplit("\n", 2)[-2:]
+        say("    " + " · ".join(x.strip() for x in tail))
+        ok = ok and (r == 0)
+
+        head("자체 시험 " + ("전부 통과 — 진짜 데이터로 --preflight 해라" if ok
+                          else "★ 실패 — 위를 보라"), "=")
+        return 0 if ok else 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 본체
+# ════════════════════════════════════════════════════════════════════════════
+def plan(systems, rate, budget_h, ns, seeds):
+    """주어진 시간에 맞춰 규모를 정한다. **버린 것을 반드시 찍는다.**
+
+    우선순위: 모든 구성체 × 양쪽 pH × 씨앗 1  →  그 다음 씨앗을 늘린다.
+    양쪽 pH 는 절대 안 줄인다 — 차분이 신호 자체이므로 한쪽만 있으면 무의미하다.
+    """
+    if budget_h is None:
+        return systems, ns, seeds, []
+    per_ns_s = 1000.0 / DT_PS / max(rate, 1e-9)          # 1 ns 당 초
+    budget_s = budget_h * 3600.0
+    for cand_seeds in range(seeds, 0, -1):
+        for cand_ns in (ns, 20.0, 10.0, 5.0, 2.0, 1.0):
+            if cand_ns > ns:
+                continue
+            need = len(systems) * len(PH_LIST) * cand_seeds * cand_ns * per_ns_s
+            if need <= budget_s:
+                drop = []
+                if cand_ns < ns:
+                    drop.append(f"계당 {ns:g} ns → **{cand_ns:g} ns** 로 줄임")
+                if cand_seeds < seeds:
+                    drop.append(f"씨앗 {seeds} → **{cand_seeds}** 로 줄임 "
+                                f"(씨앗이 1이면 잡음 분모가 없다)")
+                return systems, cand_ns, cand_seeds, drop
+    # 1 ns × 씨앗 1 로도 안 되면 구성체를 줄인다 — 항체는 최대한 남긴다
+    per_run = len(PH_LIST) * 1.0 * per_ns_s
+    k = max(2, int(budget_s // max(per_run, 1e-9)))
+    by_ab = {}
+    for s in systems:
+        by_ab.setdefault(s["항체"], []).append(s)
+    keep, i = [], 0
+    while len(keep) < k and any(len(v) > i for v in by_ab.values()):
+        for v in by_ab.values():
+            if len(v) > i and len(keep) < k:
+                keep.append(v[i])
+        i += 1
+    dropped = [s for s in systems if s not in keep]
+    return keep, 1.0, 1, [
+        f"계당 1 ns · 씨앗 1 로도 예산을 넘겨 **구성체 {len(dropped)}개를 뺐다**",
+        "  뺀 것: " + ", ".join(f"{s['항체']}/{s['링커']}" for s in dropped[:10])
+        + (" …" if len(dropped) > 10 else ""),
+        "  ★ 항체마다 최소 2개는 남기려 돌아가며 골랐다 — 항체내 대조가 살아야 한다"]
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--selftest", action="store_true", help="내장 소형계로 전 경로 검증")
+    ap.add_argument("--preflight", action="store_true", help="배선 확인 + 시간 추정만")
+    ap.add_argument("--budget-hours", type=float, default=None, help="이 시간에 맞춰 자동 규모")
+    ap.add_argument("--ns", type=float, default=20.0, help="계당 프로덕션 ns (기본 20)")
+    ap.add_argument("--seeds", type=int, default=2, help="씨앗 반복 수 (기본 2 — 잡음 분모)")
+    ap.add_argument("--force-cpu", action="store_true")
+    a = ap.parse_args(argv)
+
+    if a.selftest:
+        return selftest()
 
     head("FvLinker · pH 3 풀림 파이프라인", "=")
-    say(f"  pH {PH_LIST} · 계당 {PROD_NS:g} ns · dt {DT_PS*1000:g} fs · {TEMP_K:g} K")
-    plat, ffpair = env()
-    systems = find_structures()
+    say(f"  pH {PH_LIST} · dt {DT_PS*1000:g} fs · {TEMP_K:g} K · 씨앗 {a.seeds}")
+    plat, ffpair = env(a.force_cpu)
+    import pandas as pd
+    lab = read_excel()
+    systems = find_structures(lab)
     os.makedirs(WORK, exist_ok=True)
 
-    # ── [3] 사전점검 ────────────────────────────────────────────────────────
-    head("[3] 사전점검 — 짧게 한 번 돌려 배선을 확인한다", "=")
+    # ── 사전점검 ────────────────────────────────────────────────────────────
+    head("[2] 사전점검 — 짧게 돌려 배선을 확인하고 속도를 잰다", "=")
     s0 = systems[0]
     say(f"  대상 {s0['항체']} / {s0['링커']} ({s0['출처']})")
-    est, qs = {}, {}
+    qs, rates = {}, []
     for ph in PH_LIST:
         t0 = time.time()
         try:
-            p = prepare(s0["pdb"], ph, ffpair, f"{WORK}/_pre_ph{ph}.pdb")
-        except Exception as e:
+            p = prepare(s0["pdb"], ph, ffpair)
+        except Exception:
             say(f"\n  ★★ pH {ph} 준비 실패 — 전체 출력:")
             import traceback; traceback.print_exc()
-            say("\n  본 실행은 안 한다. 위를 보고 고쳐라.")
             return 1
-        say(f"  pH {ph}:  원자 {p['atoms']:,} · 잔기 {p['nres']} · "
-            f"이황화 **{p['ss']}개** · 단백질 순전하 **{p['q']:+.1f}**")
-        if p["ss"] == 0:
-            say("      ★★ 이황화가 0개다. scFv 라면 있어야 한다 — 입력 PDB 를 확인해라.")
+        say(f"  pH {ph}: 원자 {p['atoms']:,} · 잔기 {p['nres']} · "
+            f"이황화 **{p['ss']}개** · 단백질 순전하 **{p['q']:+.1f}**  ({time.time()-t0:.0f}s)")
+        if p["ss"] == 0 and p["nres"] > 150:
+            say("      ★★ 이황화가 0개다. scFv 라면 도메인당 하나씩 있어야 한다.")
+            say("         입력 PDB 에 수소가 붙어 있거나 Cys 가 잘렸을 수 있다.")
         t1 = time.time()
         try:
-            # 사전점검은 최소화·평형을 짧게 한다. 배선 확인이 목적이지 물리가 아니다.
-            _, prod_s, nst = simulate(p, plat, PREFLIGHT_STEPS, None, None, 10 ** 9,
-                                      resume=False, min_iters=200, eq_ns=0.004)
+            _, ps, nst = simulate(p, plat, 500, None, None, 10**9, seed=0,
+                                  resume=False, min_iters=200, eq_ns=0.004)
         except Exception:
             say(f"\n  ★★ pH {ph} 시뮬레이션 실패 — 전체 출력:")
             import traceback; traceback.print_exc()
             return 1
-        est[ph] = (prod_s, nst)
-        say(f"      준비 {t1-t0:.0f}s · 최소화+평형 {time.time()-t1-prod_s:.0f}s · "
-            f"프로덕션 {nst}스텝 **{prod_s:.1f}s**  ({nst/max(prod_s,1e-9):.0f} 스텝/초)")
+        rates.append(nst / max(ps, 1e-9))
         qs[ph] = p["q"]
+        say(f"      준비 외 최소화+평형 {time.time()-t1-ps:.0f}s · "
+            f"프로덕션 {nst}스텝 {ps:.1f}s → **{nst/max(ps,1e-9):.0f} 스텝/초**")
 
-    if len(qs) == 2:
-        q7, q3 = qs[7.4], qs[3.0]
-        say(f"\n  ★ 양성자화 검산: 단백질 순전하 pH 7.4 → {q7:+.1f} · pH 3.0 → {q3:+.1f}"
-            f"  (차이 {q3-q7:+.1f})")
-        if q3 - q7 < 5:
-            say("    ★★ pH 3 에서 전하가 거의 안 올랐다. Asp/Glu 가 중성화되지 않았다는 뜻이다.")
-            say("       이대로 돌리면 'pH 3 MD' 라고 부르면서 **pH 7 을 돌리게 된다.** 멈춘다.")
-            say("       (Asp pKa 3.9 / Glu pKa 4.3 → pH 3.0 에서 거의 전부 중성이어야 한다)")
-            return 1
-        say("    ✔ Asp/Glu 가 실제로 중성화됐다 — 진짜 pH 3 조건이다.")
+    dq = qs[3.0] - qs[7.4]
+    say(f"\n  ★ 양성자화 검산: 단백질 순전하 pH 7.4 → {qs[7.4]:+.1f} · "
+        f"pH 3.0 → {qs[3.0]:+.1f}  (차이 **{dq:+.1f}**)")
+    if dq < 5:
+        say("    ★★ pH 3 에서 전하가 거의 안 올랐다 = Asp/Glu 가 중성화되지 않았다.")
+        say("       이대로면 'pH 3 MD' 라 부르며 **pH 7 을 돌리게 된다.** 멈춘다.")
+        say("       (Asp pKa 3.9 / Glu pKa 4.3 → pH 3.0 에서 거의 전부 중성이어야 한다)")
+        return 1
+    say("    ✔ Asp/Glu 가 실제로 중성화됐다 — 진짜 pH 3 조건이다.")
 
-    prod_steps = int(PROD_NS * 1000 / DT_PS)
-    rate = np.mean([n / max(s, 1e-9) for s, n in est.values()])     # 스텝/초
-    per = prod_steps / max(rate, 1e-9)
-    n_run = len(systems) * len(PH_LIST)
-    say(f"\n  프로덕션 속도 {rate:.0f} 스텝/초 = {rate*DT_PS*86.4/1000:.1f} ns/일")
-    say(f"  추정: 계당 약 **{per/60:.0f}분** × {n_run}건 = "
-        f"**약 {per*n_run/3600:.1f}시간** (준비 시간은 별도)")
-    if per * n_run / 3600 > 14:
-        say("  ★ 14시간이 넘는다. Colab 은 도중에 끊긴다 — 체크포인트가 있으니")
-        say("    아침에 같은 명령을 다시 실행하면 이어서 간다. 또는 --ns 를 줄여라.")
-    if only_pre:
-        say("\n  --preflight 라 여기서 멈춘다.")
+    rate = float(np.mean(rates))
+    systems, ns, seeds, dropped = plan(systems, rate, a.budget_hours, a.ns, a.seeds)
+    n_run = len(systems) * len(PH_LIST) * seeds
+    per_run_s = ns * 1000 / DT_PS / max(rate, 1e-9)
+    say(f"\n  속도 {rate:.0f} 스텝/초 = **{rate*DT_PS*86.4/1000:.0f} ns/일**")
+    say(f"  계획: 구성체 {len(systems)} × pH {len(PH_LIST)} × 씨앗 {seeds} = **{n_run}건**")
+    say(f"        계당 {ns:g} ns ≈ {per_run_s/60:.0f}분 → **총 약 {per_run_s*n_run/3600:.1f}시간**"
+        f"  (준비 시간 별도)")
+    for d in dropped:
+        say(f"  ★ 줄였다: {d}")
+    if seeds < 2:
+        say("  ★★ 씨앗이 1이다 — MD 는 혼돈계라 궤적 하나는 증거가 아니다.")
+        say("     시간이 되면 --seeds 2 이상으로 다시 돌려라.")
+    if a.preflight:
+        say("\n  --preflight 이므로 여기서 멈춘다.")
         return 0
 
-    # ── [4] 본 실행 ─────────────────────────────────────────────────────────
-    head("[4] 본 실행 — 끝나는 대로 저장한다. 끊기면 다시 실행하면 이어간다", "=")
+    # ── 본 실행 ─────────────────────────────────────────────────────────────
+    head("[3] 본 실행 — 끝나는 대로 저장. 끊기면 같은 명령으로 이어간다", "=")
     res_path = f"{WORK}/results.json"
-    R = json.load(open(res_path)) if os.path.isfile(res_path) else {}
-    every = int(SAVE_PS / DT_PS)
+    R = load_json(res_path)
+    steps = int(ns * 1000 / DT_PS)
+    # ★ 저장 간격이 총 스텝보다 크면 DCD 에 프레임이 0개가 되고 measure 가 죽는다.
+    #   최소 10프레임은 나오게 묶는다.
+    every = max(1, min(int(SAVE_PS / DT_PS), max(1, steps // 10)))
+    if steps and every > steps:
+        every = max(1, steps // 2)
     t_all = time.time()
     for i, s in enumerate(systems, 1):
         for ph in PH_LIST:
-            key = f"{s['항체']}|{s['링커']}|{ph}"
-            if key in R:
-                say(f"  [{i}/{len(systems)}] {key}  건너뜀 (이미 있다)")
-                continue
-            tag = re.sub(r"[^\w.-]", "_", key)
-            top = f"{WORK}/{tag}.pdb"; dcd = f"{WORK}/{tag}.dcd"; chk = f"{WORK}/{tag}.chk"
-            say(f"  [{i}/{len(systems)}] {key} …")
-            try:
-                p = prepare(s["pdb"], ph, ffpair, top)
-                simulate(p, plat, prod_steps, chk, dcd, every)[0]
-                o = observe(top, dcd)
-                o.update(항체=s["항체"], 링커=s["링커"], pH=ph,
-                         원자=p["atoms"], 이황화=p["ss"], 순전하=p["q"], 출처=s["출처"])
-                R[key] = o
-                json.dump(R, open(res_path, "w"), ensure_ascii=False, indent=1)
-                say(f"      ✔ 소수성SASA {o['소수성SASA']:.1f} nm² · Rg {o['Rg']:.2f} nm "
-                    f"· 프레임 {o['n프레임']}  ({(time.time()-t_all)/60:.0f}분 경과)")
-            except Exception as e:
-                say(f"      ★ 실패: {type(e).__name__}: {e}")
-                import traceback; traceback.print_exc()
+            for sd in range(seeds):
+                key = f"{s['항체']}|{s['링커']}|{ph}|s{sd}"
+                if key in R:
+                    say(f"  [{i}/{len(systems)}] {key}  건너뜀 (이미 있다)"); continue
+                tag = re.sub(r"[^\w.-]", "_", key)
+                top, dcd, chk = f"{WORK}/{tag}.pdb", f"{WORK}/{tag}.dcd", f"{WORK}/{tag}.chk"
+                say(f"  [{i}/{len(systems)}] {key} …")
+                try:
+                    from openmm.app import PDBFile
+                    p = prepare(s["pdb"], ph, ffpair)
+                    if not os.path.isfile(top):
+                        with open(top, "w") as fh:
+                            PDBFile.writeFile(p["topology"], p["positions"], fh)
+                    simulate(p, plat, steps, chk, dcd, every, seed=sd)
+                    o = measure(top, dcd, s.get("링커서열", ""))
+                    o.update(항체=s["항체"], 링커=s["링커"], pH=ph, 씨앗=sd,
+                             원자=p["atoms"], 이황화=p["ss"], 순전하=p["q"],
+                             HMW=s.get("HMW", float("nan")))
+                    R[key] = o
+                    save_json(R, res_path)
+                    say(f"      ✔ SAP_max {o['SAP_max']:+.2f} · 패치 {o['최대연속패치']:.2f} nm²"
+                        f" · 염다리 {o['염다리수']} · 링커노출 {o['링커노출']:.2f}"
+                        f"  ({(time.time()-t_all)/60:.0f}분 경과)")
+                except Exception as e:
+                    say(f"      ★ 실패: {type(e).__name__}: {e}")
+                    import traceback; traceback.print_exc()
 
-    # ── [5] 차분과 순위 ─────────────────────────────────────────────────────
-    head("[5] pH 7.4 → 3.0 차분 · 그리고 HMW 순위 예측", "=")
+    return analyze(R, systems)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# [4] 분석 — y 를 보기 **전에** 항체내몫부터
+# ════════════════════════════════════════════════════════════════════════════
+def analyze(R, systems):
     import pandas as pd
-    rows = []
-    for s in systems:
-        a, b = R.get(f"{s['항체']}|{s['링커']}|7.4"), R.get(f"{s['항체']}|{s['링커']}|3.0")
-        if not (a and b):
-            continue
-        rows.append(dict(항체=s["항체"], 링커=s["링커"],
-                         소수성SASA_pH7=round(a["소수성SASA"], 2),
-                         소수성SASA_pH3=round(b["소수성SASA"], 2),
-                         Δ소수성노출=round(b["소수성SASA"] - a["소수성SASA"], 2),
-                         ΔRg=round(b["Rg"] - a["Rg"], 3),
-                         Δ최대패치=round(b["최대노출소수성"] - a["최대노출소수성"], 3)))
-    if not rows:
-        say("  아직 pH 짝이 완성된 구성체가 없다. 다시 실행하면 이어간다.")
-        return 0
-    T = pd.DataFrame(rows).sort_values(["항체", "Δ소수성노출"], ascending=[True, False])
-    say(T.to_string(index=False))
-    T.to_csv(f"{WORK}/ph3_delta.csv", index=False, encoding="utf-8-sig")
+    import fvobs as F
 
-    say("\n  ★ 예측: 항체 **안에서** Δ소수성노출이 큰 링커일수록 HMW 가 높아야 한다.")
-    say("    (붙을 확률 ∝ 드러난 끈끈한 면. 만남 빈도는 링커와 거의 무관하다.)")
-    for ab, g in T.groupby("항체"):
-        if len(g) < 2:
+    head("[4] 차분 · 잡음 · 항체내몫", "=")
+    if not R:
+        say("  결과가 없다."); return 0
+    D = pd.DataFrame(list(R.values()))
+    OBS = ["SAP_max", "SAP_sum", "최대연속패치", "소수성SASA", "총SASA",
+           "염다리수", "Rg", "링커노출", "링커Re", "링커Rg", "평균노출"]
+    OBS = [c for c in OBS if c in D.columns]
+
+    # 씨앗 평균과 씨앗간 SD — ★ SD 가 분모다. 이게 없으면 차분을 못 읽는다
+    g = D.groupby(["항체", "링커", "pH"])
+    mean = g[OBS].mean().reset_index()
+    sd = g[OBS].std(ddof=1).reset_index()
+    nseed = int(D.groupby(["항체", "링커", "pH"]).size().max() or 1)
+
+    piv = mean.pivot_table(index=["항체", "링커"], columns="pH", values=OBS)
+    rows = []
+    for (ab, lk), r in piv.iterrows():
+        d = dict(항체=ab, 링커=lk)
+        for c in OBS:
+            try:
+                d["Δ" + c] = float(r[(c, 3.0)] - r[(c, 7.4)])
+            except Exception:
+                d["Δ" + c] = float("nan")
+        rows.append(d)
+    T = pd.DataFrame(rows)
+    DCOL = [c for c in T.columns if c.startswith("Δ")]
+
+    say(f"  씨앗 {nseed}개 · 구성체 {len(T)}개 · 항체 {T.항체.nunique()}개\n")
+    if nseed >= 2:
+        say("  씨앗간 SD (차분을 이것과 견줘야 한다):")
+        for c in OBS[:6]:
+            v = sd[c].dropna()
+            if len(v):
+                say(f"    {c:12s} SD {v.mean():.3f}")
+    else:
+        say("  ★★ 씨앗이 1개다 — 잡음 분모가 없어 차분의 크기를 해석할 수 없다.")
+
+    say("\n  ★ 항체내몫 — **y(HMW)를 보기 전에** 찍는다.")
+    say("    0.3 미만이면 그 관측값은 링커가 아니라 **항체 정체**를 재고 있다.")
+    ws = []
+    for c in DCOL:
+        w = F.within_share(T[c].values, T.항체.values)
+        ws.append(dict(관측값=c, 항체내몫=round(w, 3) if np.isfinite(w) else np.nan,
+                       판정="사용" if (np.isfinite(w) and w >= 0.3) else "★버림"))
+    WS = pd.DataFrame(ws).sort_values("항체내몫", ascending=False)
+    say(WS.to_string(index=False))
+    live = [r.관측값 for r in WS.itertuples() if r.판정 == "사용"]
+
+    say("\n  차분표:")
+    say(T.round(3).to_string(index=False))
+    T.to_csv(f"{WORK}/ph3_delta.csv", index=False, encoding="utf-8-sig")
+    WS.to_csv(f"{WORK}/within_share.csv", index=False, encoding="utf-8-sig")
+
+    if not live:
+        head("판정", "=")
+        say("  ★ 항체내몫이 0.3 을 넘는 관측값이 하나도 없다.")
+        say("    전부 항체 정체를 재고 있다 — 링커 축이 아니다. HMW 와 대조하지 않는다.")
+        say("    (여기서 멈추는 게 맞다. 대조하면 항체 효과를 링커 효과로 착각하게 된다.)")
+        return 0
+
+    # ── 이제서야 y 를 본다 ──────────────────────────────────────────────────
+    head("[5] 이제 HMW 와 대조한다 — 살아남은 관측값만", "=")
+    hm = D.groupby(["항체", "링커"]).HMW.first().reset_index()
+    T2 = T.merge(hm, on=["항체", "링커"], how="left").dropna(subset=["HMW"])
+    if len(T2) < 4:
+        say(f"  HMW 가 붙은 구성체가 {len(T2)}개뿐이다 — 검정을 못 한다.")
+        return 0
+    say(f"  검정 대상 {len(T2)}개 · 항체 {T2.항체.nunique()}개")
+    say("  예측: 항체 **안에서** 노출이 큰 링커일수록 HMW 가 높다.\n")
+
+    import itertools
+    from collections import Counter
+    from itertools import permutations
+
+    def conc(x, h):
+        c = 0.0
+        for i, j in itertools.combinations(range(len(x)), 2):
+            a, b = (i, j) if x[i] < x[j] else (j, i)
+            c += 1.0 if h[b] > h[a] else (0.5 if h[b] == h[a] else 0.0)
+        return c
+
+    out = []
+    for c in live:
+        groups, obs = [], 0.0
+        for ab, gg in T2.groupby("항체"):
+            if len(gg) < 2 or not np.isfinite(gg[c]).all():
+                continue
+            x, h = list(gg[c].values), list(gg.HMW.values)
+            obs += conc(x, h); groups.append((x, h))
+        if not groups:
             continue
-        o = g.sort_values("Δ소수성노출", ascending=False)
-        say(f"    {ab}:  HMW 높을 것 →  " + "  >  ".join(o.링커))
-    say(f"\n  저장: {WORK}/ph3_delta.csv · {res_path}")
-    say("  실측 HMW 와의 순위 일치는 fvlinker_model.py 의 정확 순열검정으로 잰다.")
+        tot = Counter({0.0: 1.0})
+        for x, h in groups:
+            dd = Counter(conc(x, list(p)) for p in permutations(h))
+            s = sum(dd.values()); nt = Counter()
+            for k0, v0 in tot.items():
+                for k1, v1 in dd.items():
+                    nt[k0 + k1] += v0 * v1 / s
+            tot = nt
+        k = np.array(sorted(tot)); pr = np.array([tot[v] for v in sorted(tot)])
+        out.append(dict(관측값=c, 일치=obs, 최대=float(k.max()),
+                        귀무=round(float((k * pr).sum()), 1),
+                        p=round(float(pr[k >= obs].sum()), 4)))
+    P = pd.DataFrame(out).sort_values("p")
+    say(P.to_string(index=False))
+    P.to_csv(f"{WORK}/rank_test.csv", index=False, encoding="utf-8-sig")
+
+    head("판정", "=")
+    if len(P) and P.p.iloc[0] < 0.05:
+        say(f"  ✔ **{P.관측값.iloc[0]}** 가 HMW 순위를 맞힌다 "
+            f"({P.일치.iloc[0]:.1f}/{P.최대.iloc[0]:.0f}, 정확 순열 p = {P.p.iloc[0]:.4f})")
+        say(f"    ★ 다만 관측값 {len(P)}개를 다 본 뒤 최소 p 를 골랐다 — 다중비교가 있다.")
+        say(f"      Bonferroni 로 보면 p × {len(P)} = {P.p.iloc[0]*len(P):.4f}")
+    else:
+        pm = P.p.min() if len(P) else float("nan")
+        say(f"  ✗ 어느 관측값도 유의하지 않다 (최소 p = {pm:.4f}).")
+        say("    항체내 쌍이 적어 검정력이 낮거나, 이 축이 HMW 와 무관하다.")
+    say(f"\n  저장: {WORK}/ph3_delta.csv · within_share.csv · rank_test.csv · results.json")
     head("끝", "=")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())
