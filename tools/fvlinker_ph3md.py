@@ -291,6 +291,73 @@ def find_structures(lab):
 # ════════════════════════════════════════════════════════════════════════════
 # [2] 준비 — 조용히 틀리는 자리
 # ════════════════════════════════════════════════════════════════════════════
+
+def _rebuild_disulfides(fx, cb_cut_nm=0.50, sg_target_nm=0.205):
+    """뼈대전용 입력에서 잃어버린 이황화를 되살린다. 되살린 개수를 돌려준다.
+
+    이황화를 이룬 Cys 쌍은 **CB–CB 가 0.38~0.42 nm** 이다 (곁사슬 방향과 무관하다).
+    그 기준으로 짝을 찾아, 두 SG 를 서로 2.05 Å 떨어지게 옮기고 결합을 추가한다.
+    나머지 기하는 최소화가 정리한다.
+
+    ★ CB 로 판정하는 이유: 뼈대 입력에는 SG 가 없거나(복원 전) 엉뚱한 자리에
+      있다(복원 후). CB 는 뼈대에 원래 있으므로 믿을 수 있다.
+    """
+    import numpy as _np
+    top, pos = fx.topology, fx.positions
+    try:
+        P = _np.array([[v.x, v.y, v.z] for v in pos], float)
+    except Exception:
+        P = _np.array(pos, float)
+
+    cys = []
+    for r in top.residues():
+        if r.name.upper() not in ("CYS", "CYX"):
+            continue
+        cb = next((a for a in r.atoms() if a.name == "CB"), None)
+        sg = next((a for a in r.atoms() if a.name == "SG"), None)
+        if cb is not None and sg is not None:
+            cys.append((r, cb.index, sg.index))
+    if len(cys) < 2:
+        return 0
+
+    bonded = set()
+    for b in top.bonds():
+        if getattr(b[0], "name", "") == "SG" and getattr(b[1], "name", "") == "SG":
+            bonded.add(frozenset((b[0].residue.index, b[1].residue.index)))
+
+    # CB 거리로 가장 가까운 짝부터 묶는다 (한 Cys 는 한 번만)
+    cand = []
+    for i in range(len(cys)):
+        for j in range(i + 1, len(cys)):
+            d = float(_np.linalg.norm(P[cys[i][1]] - P[cys[j][1]]))
+            if d < cb_cut_nm:
+                cand.append((d, i, j))
+    cand.sort()
+    used, made = set(), 0
+    for d, i, j in cand:
+        if i in used or j in used:
+            continue
+        ri, rj = cys[i][0], cys[j][0]
+        if frozenset((ri.index, rj.index)) in bonded:
+            used.update((i, j)); continue
+        si, sj = cys[i][2], cys[j][2]
+        mid = (P[si] + P[sj]) / 2.0
+        ax = P[sj] - P[si]
+        n = float(_np.linalg.norm(ax))
+        ax = ax / n if n > 1e-6 else _np.array([1.0, 0.0, 0.0])
+        P[si] = mid - ax * (sg_target_nm / 2.0)
+        P[sj] = mid + ax * (sg_target_nm / 2.0)
+        top.addBond(list(ri.atoms())[[a.name for a in ri.atoms()].index("SG")],
+                    list(rj.atoms())[[a.name for a in rj.atoms()].index("SG")])
+        used.update((i, j)); made += 1
+
+    if made:
+        from openmm import Vec3 as _V
+        from openmm import unit as _u
+        fx.positions = _u.Quantity([_V(*map(float, v)) for v in P], _u.nanometer)
+    return made
+
+
 def prepare(pdb_in, ph, ffpair, pad_nm=None, solvate=True):
     """수소 제거 → pH별 양성자화 → 용매화. 검산값을 함께 돌려준다.
 
@@ -322,6 +389,13 @@ def prepare(pdb_in, ph, ffpair, pad_nm=None, solvate=True):
     fx.removeHeterogens(keepWater=False)      # ★ 물·리간드를 **수소 처리 전에** 뺀다
     fx.findMissingAtoms()
     fx.addMissingAtoms()                      # BioEmu 뼈대 → 곁사슬 복원
+
+    # ★★ BioEmu 프레임은 **뼈대뿐**이라 pdbfixer 가 Cys 곁사슬을 템플릿 로타머로
+    #    세운다. 그러면 원래 2.04 Å 이던 SG–SG 가 7.58 Å 으로 벌어져 OpenMM 이
+    #    이황화를 **하나도 못 찾는다.** scFv 는 도메인마다 이황화가 있으니, 그대로
+    #    돌리면 pH 3 에서 있지도 않은 풀림이 나오고 실행 전체가 쓰레기가 된다.
+    #    → CB–CB 거리로 짝을 찾아 SG 를 붙여 놓고 결합을 명시한다.
+    ss_added = _rebuild_disulfides(fx)
 
     ff = get_ff(ffpair)
     m = Modeller(fx.topology, fx.positions)
@@ -360,7 +434,7 @@ def prepare(pdb_in, ph, ffpair, pad_nm=None, solvate=True):
     nwat = sum(1 for r in m.topology.residues() if r.name in ("HOH", "WAT"))
     return dict(topology=m.topology, positions=m.positions, system=sysm,
                 atoms=sysm.getNumParticles(), ss=ss, q=round(float(q), 1), nres=nres,
-                protein_top=seq_top, ions=ions, nwat=nwat)
+                protein_top=seq_top, ions=ions, nwat=nwat, ss복원=int(ss_added))
 
 
 def simulate(prep, plat, steps, chk, dcd, every, seed=0, resume=True,
@@ -549,7 +623,7 @@ def selftest():
                                 min_iters=20, eq_ns=0.0)
             o = measure(top, dcd, linker_seq="")
             say(f"  pH {ph}: 원자 {p['atoms']:,} · 순전하 {p['q']:+.1f} · "
-                f"이황화 {p['ss']} · 프레임 {o['n프레임']} · "
+                f"이황화 {p['ss']}(villin 은 Cys 가 없어 0 이 정상) · 프레임 {o['n프레임']} · "
                 f"SAP_max {o['SAP_max']:+.2f} · 패치 {o['최대연속패치']:.2f} nm² · "
                 f"염다리 {o['염다리수']}  ({time.time()-t0:.0f}s)")
 
@@ -701,11 +775,17 @@ def main(argv=None):
             return 1
         preps.append(time.time() - t0)
         say(f"  pH {ph}: 원자 {p['atoms']:,} · 잔기 {p['nres']} · "
-            f"이황화 **{p['ss']}개** · 단백질 순전하 **{p['q']:+.1f}**  "
-            f"(준비 {time.time()-t0:.0f}s)")
+            f"이황화 **{p['ss']}개**"
+            + (f" (그중 {p['ss복원']}개는 뼈대에서 복원)" if p.get("ss복원") else "")
+            + f" · 단백질 순전하 **{p['q']:+.1f}**  (준비 {time.time()-t0:.0f}s)")
         if p["ss"] == 0 and p["nres"] > 150:
-            say("      ★★ 이황화가 0개다. scFv 라면 도메인당 하나씩 있어야 한다.")
-            say("         입력 PDB 에 수소가 붙어 있거나 Cys 가 잘렸을 수 있다.")
+            say("      ★★ 이황화가 **0개**다. scFv 라면 도메인마다 하나씩 있어야 한다.")
+            say("         이황화 없이 pH 3 을 돌리면 있지도 않은 풀림이 나오고")
+            say("         실행 전체가 쓰레기가 된다. 경고가 아니라 **멈춘다.**")
+            say("         원인: 입력에 Cys 가 없거나, CB–CB 가 0.50 nm 를 넘어 짝을 못 찾았다.")
+            say("         정말 이황화가 없는 구조라면 --no-ss-check 로 넘길 수 있다.")
+            if "--no-ss-check" not in sys.argv:
+                return 1
         t1 = time.time()
         try:
             _, ps, nst = simulate(p, plat, 500, None, None, 10**9, seed=0,
@@ -779,8 +859,9 @@ def main(argv=None):
                 t_prep = time.time()
                 p = prepare(s["pdb"], ph, ffpair)
                 say(f"  [{i}/{len(systems)}] {s['항체']}/{s['링커']} pH{ph} · "
-                    f"원자 {p['atoms']:,} · 이황화 {p['ss']} · 순전하 {p['q']:+.1f} "
-                    f"(준비 {time.time()-t_prep:.0f}s)")
+                    f"원자 {p['atoms']:,} · 이황화 {p['ss']}"
+                    + (f"(복원 {p['ss복원']})" if p.get("ss복원") else "")
+                    + f" · 순전하 {p['q']:+.1f} (준비 {time.time()-t_prep:.0f}s)")
             except Exception as e:
                 say(f"  [{i}/{len(systems)}] {s['항체']}/{s['링커']} pH{ph}  ★ 준비 실패: "
                     f"{type(e).__name__}: {e}")
